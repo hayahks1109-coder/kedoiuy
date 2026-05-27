@@ -3,61 +3,122 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>カメラテスト × GAS連携</title>
+    <title>MediaPipe × GAS 連携アプリ</title>
+    <!-- MediaPipeの公式ライブラリを確実に読み込みます -->
+    <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
 </head>
 <body>
-    <h1>カメラ表示 × GAS送信テスト</h1>
+    <h1>MediaPipe × GAS 連携テスト</h1>
     
+    <!-- カメラ映像の表示エリア -->
     <video id="webcam" autoplay playsinline style="width: 320px; height: 240px; transform: scaleX(-1);"></video>
     <br><br>
     
-    <button id="sendBtn">現在の状況をGASに送信</button>
-    <p id="status">カメラ起動中...</p>
+    <!-- 手が検出されたら自動でGASに送るため、ボタンは無くして自動化しました -->
+    <p id="status">MediaPipe初期化中...</p>
 
     <script>
+        // 前回のフリーズ原因だった読み込みを修正し、安全にMediaPipeを起動します
+        const { HandLandmarker, FilesetResolver } = mpTasksVision;
+
         const video = document.getElementById('webcam');
-        const sendBtn = document.getElementById('sendBtn');
         const statusText = document.getElementById('status');
         
         // あなたの本物のGASウェブアプリURLです
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbysSGzFaaHnLPqtirCokY6SiVl98_qPUfA9g5QPBw6OjdOQ3anP9clYtYMfA65C-g3i/exec";
+        const GAS_URL = "https://google.com";
 
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then((stream) => {
-                video.srcObject = stream;
-                statusText.innerText = "カメラが正常に起動しました！ボタンを押してGASへ送信できます。";
-            })
-            .catch((err) => {
-                statusText.innerText = "カメラの起動に失敗しました: " + err;
-            });
+        let handLandmarker;
+        let lastResult = "手は検出されていません";
+        let isSending = false; // 二重送信を防ぐためのロック
 
-        sendBtn.addEventListener('click', async () => {
-            statusText.innerText = "GASへ送信中...";
-            
-            const payload = {
-                resultMessage: "GitHub Pagesからのカメラ連携テスト成功"
-            };
-
+        // 1. MediaPipeの初期化
+        async function initMediaPipe() {
             try {
-                const response = await fetch(GAS_URL, {
-                    method: "POST",
-                    mode: "cors",
-                    headers: {
-                        "Content-Type": "text/plain"
+                statusText.innerText = "AIライブラリ読み込み中...";
+                const vision = await FilesetResolver.forVisionTasks(
+                    "https://jsdelivr.net"
+                );
+                
+                statusText.innerText = "手の検出モデルを読み込み中...";
+                handLandmarker = await HandLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: "https://googleapis.com",
+                        delegate: "GPU"
                     },
-                    body: JSON.stringify(payload)
+                    runningMode: "VIDEO",
+                    numHands: 2
                 });
                 
-                const resData = await response.json();
-                if(resData.status === "success") {
-                    statusText.innerText = "🚀 送信に成功しました！";
-                } else {
-                    statusText.innerText = "❌ GAS側でエラーが発生: " + resData.message;
-                }
-            } catch (error) {
-                statusText.innerText = "❌ 送信失敗。";
+                statusText.innerText = "カメラを起動しています...";
+                startCamera();
+            } catch (e) {
+                statusText.innerText = "初期化エラーが発生しました: " + e;
             }
-        });
+        }
+
+        // 2. カメラの起動
+        function startCamera() {
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then((stream) => {
+                    video.srcObject = stream;
+                    video.addEventListener('loadeddata', predictWebcam);
+                    statusText.innerText = "カメラ動作中。手をかざしてください。";
+                })
+                .catch((err) => {
+                    statusText.innerText = "カメラの起動に失敗しました: " + err;
+                });
+        }
+
+        // 3. リアルタイムで手の骨格を解析するループ
+        let lastVideoTime = -1;
+        async function predictWebcam() {
+            if (video.currentTime !== lastVideoTime && handLandmarker) {
+                lastVideoTime = video.currentTime;
+                const results = handLandmarker.predictForVideo(video, performance.now());
+                
+                // 画面に手をかざした（骨格が検出された）ときの処理
+                if (results.landmarks && results.landmarks.length > 0) {
+                    const currentResult = `画面内に手が ${results.landmarks.length} つ検出されました！`;
+                    statusText.innerText = currentResult;
+
+                    // まだ送信中でなければ、自動的にGASへデータを送る
+                    if (!isSending) {
+                        sendToGAS(currentResult);
+                    }
+                } else {
+                    statusText.innerText = "手を探しています... カメラに手を映してください。";
+                }
+            }
+            window.requestAnimationFrame(predictWebcam);
+        }
+
+        // 4. GASへの自動送信処理
+        async function sendToGAS(message) {
+            isSending = true; // 送信中ロックをかける
+            
+            try {
+                await fetch(GAS_URL, {
+                    method: "POST",
+                    mode: "cors",
+                    headers: { "Content-Type": "text/plain" },
+                    body: JSON.stringify({ resultMessage: message })
+                });
+                
+                // 送信に成功したら、3秒間待ってから次の送信を許可する（連打防止）
+                setTimeout(() => {
+                    isSending = false;
+                }, 3000);
+                
+            } catch (error) {
+                // エラーが起きても、5秒後に再チャレンジできるようにする
+                setTimeout(() => {
+                    isSending = false;
+                }, 5000);
+            }
+        }
+
+        // アプリ起動
+        initMediaPipe();
     </script>
 </body>
 </html>
