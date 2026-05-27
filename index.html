@@ -19,7 +19,7 @@
         const sendBtn = document.getElementById('sendBtn');
         const statusText = document.getElementById('status');
         
-        // ★ここにGASのURLを貼り付けてください
+        // あなたの本物のGASウェブアプリURLです
         const GAS_URL = "https://script.google.com/macros/s/AKfycbysSGzFaaHnLPqtirCokY6SiVl98_qPUfA9g5QPBw6OjdOQ3anP9clYtYMfA65C-g3i/exec";
 
         navigator.mediaDevices.getUserMedia({ video: true })
@@ -58,12 +58,6 @@
                 statusText.innerText = "❌ 送信失敗。";
             }
         });
-    </script>
-</body>
-</html>
-
-        // 起動
-        initMediaPipe();
     </script>
 </body>
 </html>
