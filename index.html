@@ -1,11 +1,10 @@
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MediaPipe to GAS Link</title>
-    <!-- MediaPipe に必要なライブラリの読み込み -->
-    <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
 </head>
 <body>
     <h1>MediaPipe × GAS 連携テスト</h1>
@@ -15,7 +14,10 @@
     <button id="sendBtn" disabled>検出結果をGASに送信</button>
     <p id="status">MediaPipe初期化中...</p>
 
-    <script>
+    <!-- 最新のMediaPipe Tasks-Visionを正しく読み込むための設定 -->
+    <script type="module">
+        import { HandLandmarker, FilesetResolver } from "https://jsdelivr.net";
+
         const video = document.getElementById('webcam');
         const sendBtn = document.getElementById('sendBtn');
         const statusText = document.getElementById('status');
@@ -87,16 +89,15 @@
             statusText.innerText = "GASへ送信中...";
             
             const payload = {
-                resultMessage: lastResult // 解析結果のテキストを同封
+                resultMessage: lastResult
             };
 
             try {
-                // fetchを使ってGASのAPIにデータをPOST送信
                 const response = await fetch(GAS_URL, {
                     method: "POST",
-                    mode: "cors", // CORS対策
+                    mode: "cors",
                     headers: {
-                        "Content-Type": "text/plain" // GASで受け取るための標準的な設定
+                        "Content-Type": "text/plain"
                     },
                     body: JSON.stringify(payload)
                 });
