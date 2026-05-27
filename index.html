@@ -107,7 +107,9 @@
             }
         }
 
-        initMediaPipe();
+        window.addEventListener('load', () => {
+            setTimeout(initMediaPipe, 1000);
+        });
     </script>
 </body>
 </html>
