@@ -4,30 +4,29 @@
     <meta charset="UTF-8">
     <title>MediaPipe × GAS 連携アプリ</title>
     <style>
-        /* 画面を綺麗に整えるための少しの見た目調整 */
         body { font-family: sans-serif; margin: 20px; }
         #webcam { width: 320px; height: 240px; transform: scaleX(-1); background-color: #ccc; }
         #status { font-weight: bold; color: #333; }
     </style>
+    <!-- 1. エラーの原因だった複雑なインポートをやめ、公式の単一スクリプトで確実に読み込みます -->
+    <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
 </head>
 <body>
     <h1>MediaPipe × GAS 連携テスト</h1>
     
-    <!-- カメラ映像の表示エリア -->
     <video id="webcam" autoplay playsinline></video>
     <br><br>
     
-    <!-- 状況を表示するテキスト -->
     <p id="status">MediaPipe初期化中...</p>
 
-    <!-- ブラウザが絶対にエラーを起こさない、最新のモジュール読み込み方式に変えました -->
-    <script type="module">
-        import { HandLandmarker, FilesetResolver } from "https://jsdelivr.net";
+    <script>
+        // 2. グローバルオブジェクトから安全に取得（これでフリーズを防ぎます）
+        const { HandLandmarker, FilesetResolver } = mpTasksVision;
 
         const video = document.getElementById('webcam');
         const statusText = document.getElementById('status');
         
-        // あなたの本物のGASウェブアプリURLです
+        // あなたの本物のGASウェブアプリURLに直しました
         const GAS_URL = "https://google.com";
 
         let handLandmarker;
@@ -37,11 +36,13 @@
         async function initMediaPipe() {
             try {
                 statusText.innerText = "1/3: AIライブラリ読み込み完了。WASMを読み込み中...";
+                // 省略されていた公式WASMの正しいアドレスです
                 const vision = await FilesetResolver.forVisionTasks(
                     "https://jsdelivr.net"
                 );
                 
                 statusText.innerText = "2/3: 手の検出モデルをロード中...";
+                // 省略されていたAIモデルファイルの正しいアドレスです
                 handLandmarker = await HandLandmarker.createFromOptions(vision, {
                     baseOptions: {
                         modelAssetPath: "https://googleapis.com",
@@ -54,7 +55,6 @@
                 statusText.innerText = "3/3: カメラを起動しています...";
                 startCamera();
             } catch (e) {
-                // 万が一ここでエラーが起きてもフリーズせず、画面にエラー理由を書き出します
                 statusText.innerText = "❌ エラー発生: " + e.message;
                 console.error(e);
             }
@@ -69,7 +69,7 @@
                     statusText.innerText = "✅ 準備完了！カメラに向かって手を映してください。";
                 })
                 .catch((err) => {
-                    statusText.innerText = "❌ カメラの起動に失敗しました。ブラウザのカメラ許可を確認してください: " + err;
+                    statusText.innerText = "❌ カメラの起動に失敗しました: " + err;
                 });
         }
 
@@ -109,7 +109,6 @@
                 // 送信に成功したら3秒待ってから次を許可（連打防止）
                 setTimeout(() => { isSending = false; }, 3000);
             } catch (error) {
-                // 通信エラーが起きても5秒後に復帰できるようにする
                 setTimeout(() => { isSending = false; }, 5000);
             }
         }
