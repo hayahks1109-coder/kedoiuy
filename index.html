@@ -1,25 +1,28 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
     <title>MediaPipe × GAS 連携アプリ</title>
-    <!-- MediaPipeの公式ライブラリを確実に読み込みます -->
-    <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
+    <style>
+        /* 画面を綺麗に整えるための少しの見た目調整 */
+        body { font-family: sans-serif; margin: 20px; }
+        #webcam { width: 320px; height: 240px; transform: scaleX(-1); background-color: #ccc; }
+        #status { font-weight: bold; color: #333; }
+    </style>
 </head>
 <body>
     <h1>MediaPipe × GAS 連携テスト</h1>
     
     <!-- カメラ映像の表示エリア -->
-    <video id="webcam" autoplay playsinline style="width: 320px; height: 240px; transform: scaleX(-1);"></video>
+    <video id="webcam" autoplay playsinline></video>
     <br><br>
     
-    <!-- 手が検出されたら自動でGASに送るため、ボタンは無くして自動化しました -->
+    <!-- 状況を表示するテキスト -->
     <p id="status">MediaPipe初期化中...</p>
 
-    <script>
-        // 前回のフリーズ原因だった読み込みを修正し、安全にMediaPipeを起動します
-        const { HandLandmarker, FilesetResolver } = mpTasksVision;
+    <!-- ブラウザが絶対にエラーを起こさない、最新のモジュール読み込み方式に変えました -->
+    <script type="module">
+        import { HandLandmarker, FilesetResolver } from "https://jsdelivr.net";
 
         const video = document.getElementById('webcam');
         const statusText = document.getElementById('status');
@@ -28,18 +31,17 @@
         const GAS_URL = "https://google.com";
 
         let handLandmarker;
-        let lastResult = "手は検出されていません";
-        let isSending = false; // 二重送信を防ぐためのロック
+        let isSending = false;
 
         // 1. MediaPipeの初期化
         async function initMediaPipe() {
             try {
-                statusText.innerText = "AIライブラリ読み込み中...";
+                statusText.innerText = "1/3: AIライブラリ読み込み完了。WASMを読み込み中...";
                 const vision = await FilesetResolver.forVisionTasks(
                     "https://jsdelivr.net"
                 );
                 
-                statusText.innerText = "手の検出モデルを読み込み中...";
+                statusText.innerText = "2/3: 手の検出モデルをロード中...";
                 handLandmarker = await HandLandmarker.createFromOptions(vision, {
                     baseOptions: {
                         modelAssetPath: "https://googleapis.com",
@@ -49,10 +51,12 @@
                     numHands: 2
                 });
                 
-                statusText.innerText = "カメラを起動しています...";
+                statusText.innerText = "3/3: カメラを起動しています...";
                 startCamera();
             } catch (e) {
-                statusText.innerText = "初期化エラーが発生しました: " + e;
+                // 万が一ここでエラーが起きてもフリーズせず、画面にエラー理由を書き出します
+                statusText.innerText = "❌ エラー発生: " + e.message;
+                console.error(e);
             }
         }
 
@@ -62,10 +66,10 @@
                 .then((stream) => {
                     video.srcObject = stream;
                     video.addEventListener('loadeddata', predictWebcam);
-                    statusText.innerText = "カメラ動作中。手をかざしてください。";
+                    statusText.innerText = "✅ 準備完了！カメラに向かって手を映してください。";
                 })
                 .catch((err) => {
-                    statusText.innerText = "カメラの起動に失敗しました: " + err;
+                    statusText.innerText = "❌ カメラの起動に失敗しました。ブラウザのカメラ許可を確認してください: " + err;
                 });
         }
 
@@ -76,26 +80,25 @@
                 lastVideoTime = video.currentTime;
                 const results = handLandmarker.predictForVideo(video, performance.now());
                 
-                // 画面に手をかざした（骨格が検出された）ときの処理
+                // 画面に手が映ったときの処理
                 if (results.landmarks && results.landmarks.length > 0) {
-                    const currentResult = `画面内に手が ${results.landmarks.length} つ検出されました！`;
+                    const currentResult = `✋ 手が ${results.landmarks.length} つ検出されています！`;
                     statusText.innerText = currentResult;
 
-                    // まだ送信中でなければ、自動的にGASへデータを送る
+                    // GASが送信中でなければ、自動で送信する
                     if (!isSending) {
                         sendToGAS(currentResult);
                     }
                 } else {
-                    statusText.innerText = "手を探しています... カメラに手を映してください。";
+                    statusText.innerText = "👋 手を探しています... カメラに手をかざしてください。";
                 }
             }
             window.requestAnimationFrame(predictWebcam);
         }
 
-        // 4. GASへの自動送信処理
+        // 4. GASへの自動送信
         async function sendToGAS(message) {
-            isSending = true; // 送信中ロックをかける
-            
+            isSending = true; // 送信中ロック
             try {
                 await fetch(GAS_URL, {
                     method: "POST",
@@ -103,17 +106,11 @@
                     headers: { "Content-Type": "text/plain" },
                     body: JSON.stringify({ resultMessage: message })
                 });
-                
-                // 送信に成功したら、3秒間待ってから次の送信を許可する（連打防止）
-                setTimeout(() => {
-                    isSending = false;
-                }, 3000);
-                
+                // 送信に成功したら3秒待ってから次を許可（連打防止）
+                setTimeout(() => { isSending = false; }, 3000);
             } catch (error) {
-                // エラーが起きても、5秒後に再チャレンジできるようにする
-                setTimeout(() => {
-                    isSending = false;
-                }, 5000);
+                // 通信エラーが起きても5秒後に復帰できるようにする
+                setTimeout(() => { isSending = false; }, 5000);
             }
         }
 
