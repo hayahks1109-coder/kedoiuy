@@ -32,7 +32,8 @@
         // 1. ｴﾗｰの原因だったGoogleの外部AIﾓﾃﾞﾙを一切使わず､ｶﾒﾗを即座に起動します
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
-            navigator.mediaDevices.getUserMedia({ video: true })
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
+
                 .then((stream) => {
                     video.srcObject = stream;
                     statusText.innerText = "✅ ｶﾒﾗ起動成功!手が映ったら自動でGASへ送信します｡";
