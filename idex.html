@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+  <video id="webcam" autoplay playsinline style="width: 640px; height: 480px;"></video>
+  <button id="sendBtn">現在の座標をGASに送信</button>
+
+  <script>
+    const videoElement = document.getElementById('webcam');
+    const sendBtn = document.getElementById('sendBtn');
+    let currentLandmarks = null;
+
+    // 取得したGASのWebアプリURLをここに貼り付ける
+    const GAS_URL = "YOUR_GAS_WEB_APP_URL_HERE"; 
+
+    // MediaPipe Handsの設定
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    // 座標が検出された時の処理
+    hands.onResults((results) => {
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        // 最新の座標データを保持（x, y, z の配列）
+        currentLandmarks = results.multiHandLandmarks[0];
+      }
+    });
+
+    // カメラの起動
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({image: videoElement});
+      },
+      width: 640,
+      height: 480
+    });
+    camera.start();
+
+    // ボタンを押したらGASにデータをPOST送信
+    sendBtn.addEventListener('click', () => {
+      if (!currentLandmarks) {
+        alert("手データがまだ検出されていません");
+        return;
+      }
+
+      fetch(GAS_URL, {
+        method: "POST",
+        mode: "cors", // GASへのクロスドメイン通信を許可
+        headers: {
+          "Content-Type": "text/plain" // GASのdoPostでパースしやすくするためtext/plain推奨
+        },
+        body: JSON.stringify({ landmarks: currentLandmarks })
+      })
+      .then(res => res.json())
+      .then(data => console.log("GASからのレスポンス:", data))
+      .catch(err => console.error("エラー:", err));
+    });
+  </script>
+</body>
+</html>
