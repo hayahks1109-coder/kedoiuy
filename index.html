@@ -32,6 +32,7 @@
     <!-- ｶﾒﾗ映像の表示ｴリア（グリッド線を重ねる箱に変えました） -->
 <div class="camera-container">
     <video id="webcam" autoplay playsinline></video>
+    <canvas id="output_canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></canvas>
     <div class="grid-overlay">
         <div class="grid-line-v1"></div>
         <div class="grid-line-v2"></div>
@@ -45,7 +46,12 @@
     <!-- 状況を表示するﾃｷｽﾄ -->
     <p id="status">ｼｽﾃﾑ起動中...</p>
 
+    <!-- ★骨格描画ﾂｰﾙの読み込み(すべて全角にしています｡半角に直してご利用ください) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
     <script>
+
         const video = document.getElementById('webcam');
         const statusText = document.getElementById('status');
         
@@ -77,8 +83,12 @@
         // ✌️ MediaPipeのAIによる精密なピースサイン判定
         let isCooldown = false;
 
-        function startLightweightDetection() {
-            // MediaPipeの初期化（★ここだけ貼り付けたあと手動で半角に直してください！）
+                function startLightweightDetection() {
+            // ★描画先のｷｬﾝﾊﾞｽ情報を取得
+            const canvasElement = document.getElementById('output_canvas');
+            const canvasCtx = canvasElement.getContext('2d');
+
+            // MediaPipeの初期化(★URL部分をすべて全角にしています｡半角に直してください)
             const hands = new window.Hands({
                 locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file
             });
@@ -92,37 +102,59 @@
 
             // AIが指の形を判定したときの処理
             hands.onResults((results) => {
+                // ★ｷｬﾝﾊﾞｽのｻｲｽﾞをｶﾒﾗ映像に合わせる
+                canvasElement.width = video.videoWidth || 640;
+                canvasElement.height = video.videoHeight || 480;
+
+                // ★古い描画を一度消してｸﾘｱにする
+                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+                // ★画面に手のﾎﾞｰﾝ(骨格とﾄﾞｯﾄ)を描画する処理
+                if (results.multiHandLandmarks) {
+                    for (const landmarks of results.multiHandLandmarks) {
+                        // 白い線で骨格を繋ぐ
+                        window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 4});
+                        // 赤いﾄﾞｯﾄで関節を描く
+                        window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
+                    }
+                }
+
                 if (isCooldown) return;
 
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                    const landmarks = results.multiHandLandmarks[0];
+                    const landmarks = results.multiHandLandmarks;
 
-                    // MediaPipeの関節番号（人差し指先:8、根元:6、中指先:12、根元:10、薬指先:16、根元:14、小指先:20、根元:18）
-　　　　　　　　　　　const isIndexUp = landmarks[0][8].y < landmarks[0][6].y;
-　　　　　　　　　　　const isMiddleUp = landmarks[0][12].y < landmarks[0][10].y;
-　　　　　　　　　　　const isRingFolded = landmarks[0][16].y > landmarks[0][14].y;
-　　　　　　　　　　　const isPinkyFolded = landmarks[0][20].y > landmarks[0][18].y;
+                    // MediaPipeの関節番号(人差し指先:8､根元:6､中指先:12､根元:10､薬指先:16､根元:14､小指先:20､根元:18)
+　　　　　　　　　　　const isIndexUp = landmarks[8].y < landmarks[6].y;
+　　　　　　　　　　　const isMiddleUp = landmarks[12].y < landmarks[10].y;
+　　　　　　　　　　　const isRingUp = landmarks[16].y < landmarks[14].y;
+　　　　　　　　　　　const isPinkyUp = landmarks[20].y < landmarks[18].y;
 
-                    // 人差し指と中指だけが立ち、薬指と小指が曲がっている「本物のピース」の時だけシャッターを切る
+
+                    // 人差し指と中指だけが立ち､薬指と小指が曲がっている｢本物のﾋﾟｰｽ｣の時だけｼｬｯﾀｰを切る
                     if (isIndexUp && isMiddleUp && isRingFolded && isPinkyFolded) {
                         isCooldown = true;
-                        statusText.innerText = "✌️ ピースサインをAIが検知！写真を保存します！";
+                        statusText.innerText = "✌️ ﾋﾟｰｽｻｲﾝをAIが検知!写真を保存します!";
                         captureAndSend();
                     } else {
-                        statusText.innerText = "👋 ピースサインを待機中... カメラにピースを映してください。";
+                        statusText.innerText = "👋 ﾋﾟｰｽｻｲﾝを待機中... ｶﾒﾗにﾋﾟｰｽを映してください｡";
                     }
                 } else {
                     statusText.innerText = "📷 画面内に手を探しています...";
                 }
             });
 
-            // カメラの映像を1コマずつMediaPipeのAIに送り続けます
+            // ｶﾒﾗの映像を1ｺﾏずつMediaPipeのAIに送り続けます
             const frameLoop = async () => {
-                await hands.send({ image: video });
+                // ★ｶﾒﾗ映像の読み込みが完全に完了している時だけAIに送るｶﾞｰﾄﾞ処理
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    await hands.send({ image: video });
+                }
                 window.requestAnimationFrame(frameLoop);
             };
             frameLoop();
         }
+
 
         // 写真を切り抜いてGASへ送信する関数（今のコードにある仕組みをそのまま画像用に適応しています）
         async function captureAndSend() {
@@ -172,4 +204,3 @@
     </script>
 </body>
 </html>
-
