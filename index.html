@@ -125,10 +125,11 @@
                     const landmarks = results.multiHandLandmarks;
 
                     // MediaPipeの関節番号(人差し指先:8､根元:6､中指先:12､根元:10､薬指先:16､根元:14､小指先:20､根元:18)
-                    const isIndexUp = landmarks.y < landmarks.y;
-                    const isMiddleUp = landmarks.y < landmarks.y;
-                    const isRingFolded = landmarks.y > landmarks.y;
-                    const isPinkyFolded = landmarks.y > landmarks.y;
+　　　　　　　　　　　const isIndexUp = landmarks[8].y < landmarks[6].y;
+　　　　　　　　　　　const isMiddleUp = landmarks[12].y < landmarks[10].y;
+　　　　　　　　　　　const isRingUp = landmarks[16].y < landmarks[14].y;
+　　　　　　　　　　　const isPinkyUp = landmarks[20].y < landmarks[18].y;
+
 
                     // 人差し指と中指だけが立ち､薬指と小指が曲がっている｢本物のﾋﾟｰｽ｣の時だけｼｬｯﾀｰを切る
                     if (isIndexUp && isMiddleUp && isRingFolded && isPinkyFolded) {
