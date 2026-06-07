@@ -145,14 +145,20 @@
             });
 
             // ｶﾒﾗの映像を1ｺﾏずつMediaPipeのAIに送り続けます
+                      // カメラの映像を1コマずつMediaPipeのAIに送り続けます
             const frameLoop = async () => {
-                // ★ｶﾒﾗ映像の読み込みが完全に完了している時だけAIに送るｶﾞｰﾄﾞ処理
-                if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                    await hands.send({ image: video });
+                // カメラの準備ができていない場合は、次のフレームで即やり直す
+                if (video.readyState < video.HAVE_ENOUGH_DATA) {
+                    window.requestAnimationFrame(frameLoop);
+                    return;
                 }
+                
+                // 準備ができていればAIに映像を送り、終わったら次のフレームへ進む
+                await hands.send({ image: video });
                 window.requestAnimationFrame(frameLoop);
             };
             frameLoop();
+
         }
 
 
