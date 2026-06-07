@@ -101,25 +101,51 @@
             });
 
             // AIが指の形を判定したときの処理
-            hands.onResults((results) => {
-                // ★ｷｬﾝﾊﾞｽのｻｲｽﾞをｶﾒﾗ映像に合わせる
-                canvasElement.width = video.videoWidth || 640;
-                canvasElement.height = video.videoHeight || 480;
+                    // AIが指の形を判定したときの処理
+        hands.onResults((results) => {
+            // ★1. キャンバスのサイズをカメラ映像にしっかり合わせる
+            canvasElement.width = video.videoWidth || 640;
+            canvasElement.height = video.videoHeight || 480;
 
-                // ★古い描画を一度消してｸﾘｱにする
-                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            // ★2. 1コマ前の古いボーンの線をすべて消してお掃除する
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-                // ★画面に手のﾎﾞｰﾝ(骨格とﾄﾞｯﾄ)を描画する処理
-                if (results.multiHandLandmarks) {
-                    for (const landmarks of results.multiHandLandmarks) {
-                        // 白い線で骨格を繋ぐ
-                        window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 4});
-                        // 赤いﾄﾞｯﾄで関節を描く
-                        window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
-                    }
+            // ★3. 画面に新しい位置の手のボーン（骨格とドット）を描画
+            if (results.multiHandLandmarks) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 4});
+                    window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
                 }
+            }
 
-                if (isCooldown) return;
+            // ★4. 写真を送信した後の5秒間は、ここから下の「写真送信処理」だけをストップする
+            if (isCooldown) return;
+
+            // ★5. 元のまま触らない判定処理のエリア
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+
+                const isIndexUp = landmarks[8].y < landmarks[6].y;
+                const isMiddleUp = landmarks[12].y < landmarks[10].y;
+                const isRingUp = landmarks[16].y < landmarks[14].y;
+                const isPinkyUp = landmarks[20].y < landmarks[18].y;
+
+                if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp) {
+                    isCooldown = true;
+                    statusText.innerText = "🖐️ パーをAIが検知！写真を保存します！";
+                    captureAndSend();
+                } else {
+                    statusText.innerText = "👋 パーのサインを待機中... カメラに手のひらを映してください。";
+                }
+            } else {
+                statusText.innerText = "📷 画面内に手を探しています...";
+            }
+        });
+
+
+
+
+
 
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const landmarks = results.multiHandLandmarks;
