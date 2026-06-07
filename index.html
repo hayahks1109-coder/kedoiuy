@@ -23,6 +23,7 @@
 
         #status { font-weight: bold; color: #333; }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
     <h1>MediaPipe代替 × GAS 連携ﾃｽﾄ</h1>
@@ -73,41 +74,80 @@
 
         // 3. ﾌﾞﾗｳｻﾞ標準機能による簡易判定(CORSｴﾗｰが絶対に起きない安全な方法です)
                // ✌️ ピースサインの検知と撮影処理
+        // ✌️ MediaPipeのAIによる精密なピースサイン判定
         let isCooldown = false;
-        
-        // 画面の映像を解析して指の形をチェックします
+
         function startLightweightDetection() {
+            // MediaPipeの初期化（★ここだけ貼り付けたあと手動で半角に直してください！）
+            const hands = new window.Hands({
+                locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.7,
+                minTrackingConfidence: 0.7
+            });
+
+            // AIが指の形を判定したときの処理
+            hands.onResults((results) => {
+                if (isCooldown) return;
+
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    const landmarks = results.multiHandLandmarks[0];
+
+                    // MediaPipeの関節番号（人差し指先:8、根元:6、中指先:12、根元:10、薬指先:16、根元:14、小指先:20、根元:18）
+                    const isIndexUp = landmarks[8].y < landmarks[6].y;
+                    const isMiddleUp = landmarks[12].y < landmarks[10].y;
+                    const isRingFolded = landmarks[16].y > landmarks[14].y;
+                    const isPinkyFolded = landmarks[20].y > landmarks[18].y;
+
+                    // 人差し指と中指だけが立ち、薬指と小指が曲がっている「本物のピース」の時だけシャッターを切る
+                    if (isIndexUp && isMiddleUp && isRingFolded && isPinkyFolded) {
+                        isCooldown = true;
+                        statusText.innerText = "✌️ ピースサインをAIが検知！写真を保存します！";
+                        captureAndSend();
+                    } else {
+                        statusText.innerText = "👋 ピースサインを待機中... カメラにピースを映してください。";
+                    }
+                } else {
+                    statusText.innerText = "📷 画面内に手を探しています...";
+                }
+            });
+
+            // カメラの映像を1コマずつMediaPipeのAIに送り続けます
+            const frameLoop = async () => {
+                await hands.send({ image: video });
+                window.requestAnimationFrame(frameLoop);
+            };
+            frameLoop();
+        }
+
+        // 写真を切り抜いてGASへ送信する関数（今のコードにある仕組みをそのまま画像用に適応しています）
+        async function captureAndSend() {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imageDataUrl = canvas.toDataURL('image/jpeg', 0.8);
             
-            // 5秒ごとに画面をチェックしてピースサインを探します
-            setInterval(async () => {
-                if (isCooldown) return;
-                
-                // 本来はここで指の骨格を計算しますが、フリーズを100%防ぐため安全にシャッターを切ります
-                isCooldown = true;
-                statusText.innerText = "✌️ ピースサインを検知！写真を保存します！";
-                
-                canvas.width = video.videoWidth || 640;
-                canvas.height = video.videoHeight || 480;
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                const imageDataUrl = canvas.toDataURL('image/jpeg', 0.8);
-                
-                try {
-                    await fetch(GAS_URL, {
-                        method: "POST",
-                        mode: "cors",
-                        headers: { "Content-Type": "text/plain" },
-                        body: JSON.stringify({ image: imageDataUrl })
-                    });
-                    statusText.innerText = "🚀 Googleドライブに写真を保存しました！(5秒間待機)";
-                    setTimeout(() => { isCooldown = false; }, 5000);
-                } catch (error) {
-                    statusText.innerText = "❌ 送信失敗: " + error.message;
-                    setTimeout(() => { isCooldown = false; }, 5000);
-                }
-            }, 5000);
+            try {
+                await fetch(GAS_URL, {
+                    method: "POST",
+                    mode: "cors",
+                    headers: { "Content-Type": "text/plain" },
+                    body: JSON.stringify({ image: imageDataUrl })
+                });
+                statusText.innerText = "🚀 Googleドライブに写真を保存しました！(5秒間待機)";
+                setTimeout(() => { isCooldown = false; }, 5000);
+            } catch (error) {
+                statusText.innerText = "❌ 送信失敗: " + error.message;
+                setTimeout(() => { isCooldown = false; }, 5000);
+            }
         }
+
 
         // 4. 先ほど｢送信成功｣を叩き出した､完璧に動くGASへの送信処理です
         async function sendToGAS(message) {
