@@ -132,16 +132,18 @@
 
 
                     // 人差し指と中指だけが立ち､薬指と小指が曲がっている｢本物のﾋﾟｰｽ｣の時だけｼｬｯﾀｰを切る
-                    if (isIndexUp && isMiddleUp && isRingFolded && isPinkyFolded) {
-                        isCooldown = true;
-                        statusText.innerText = "✌️ ﾋﾟｰｽｻｲﾝをAIが検知!写真を保存します!";
-                        captureAndSend();
-                    } else {
-                        statusText.innerText = "👋 ﾋﾟｰｽｻｲﾝを待機中... ｶﾒﾗにﾋﾟｰｽを映してください｡";
-                    }
-                } else {
-                    statusText.innerText = "📷 画面内に手を探しています...";
-                }
+    // 4本すべての指が立っている「パー」の時にシャッターを切る
+    if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp) {
+        isCooldown = true;
+        statusText.innerText = "🖐️ パーをAIが検知！写真を保存します！";
+        captureAndSend();
+    } else {
+        statusText.innerText = "👋 パーのサインを待機中... カメラに手のひらを映してください。";
+    }
+} else {
+    statusText.innerText = "📷 画面内に手を探しています...";
+}
+
             });
 
             // ｶﾒﾗの映像を1ｺﾏずつMediaPipeのAIに送り続けます
