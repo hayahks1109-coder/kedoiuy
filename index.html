@@ -119,9 +119,10 @@
                     }
                 }
 
-                if (isCooldown) return;
+                
 
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    if (isCooldown) return;
                     const landmarks = results.multiHandLandmarks;
 
                     // MediaPipeの関節番号(人差し指先:8､根元:6､中指先:12､根元:10､薬指先:16､根元:14､小指先:20､根元:18)
