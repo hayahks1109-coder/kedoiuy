@@ -122,7 +122,7 @@
                 if (isCooldown) return;
 
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                    const landmarks = results.multiHandLandmarks;
+                    const landmarks = results.multiHandLandmarks[0];
 
                     // MediaPipeの関節番号(人差し指先:8､根元:6､中指先:12､根元:10､薬指先:16､根元:14､小指先:20､根元:18)
 　　　　　　　　　　　const isIndexUp = landmarks[8].y < landmarks[6].y;
@@ -132,12 +132,12 @@
 
 
                     // 人差し指と中指だけが立ち､薬指と小指が曲がっている｢本物のﾋﾟｰｽ｣の時だけｼｬｯﾀｰを切る
-                    if (isIndexUp && isMiddleUp && isRingFolded && isPinkyFolded) {
+                    if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp) {
                         isCooldown = true;
-                        statusText.innerText = "✌️ ﾋﾟｰｽｻｲﾝをAIが検知!写真を保存します!";
+                        statusText.innerText = "🖐️ パーをAIが検知！写真を保存します！";
                         captureAndSend();
                     } else {
-                        statusText.innerText = "👋 ﾋﾟｰｽｻｲﾝを待機中... ｶﾒﾗにﾋﾟｰｽを映してください｡";
+                        statusText.innerText = "👋 パーのサインを待機中... カメラに手のひらを映してください。";
                     }
                 } else {
                     statusText.innerText = "📷 画面内に手を探しています...";
