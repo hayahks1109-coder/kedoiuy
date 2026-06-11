@@ -85,7 +85,7 @@
         let wasGoo = false; // ★「直前がグーだったか」を記憶する変数
 
 
-                function startLightweightDetection() {
+        function startLightweightDetection() {
             // ★描画先のｷｬﾝﾊﾞｽ情報を取得
             const canvasElement = document.getElementById('output_canvas');
             const canvasCtx = canvasElement.getContext('2d');
@@ -126,15 +126,17 @@
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const landmarks = results.multiHandLandmarks[0];
 
-                    // MediaPipeの関節番号(人差し指先:8､根元:6､中指先:12､根元:10､薬指先:16､根元:14､小指先:20､根元:18)
+                    // MediaPipeの関節番号(人差し指先:8､根元:6､中指先:12､根元:10､薬指先:16､根元:14､小指先:20､根元:18＋親指追加しました)
 　　　　　　　　　　　const isIndexUp = landmarks[8].y < landmarks[6].y;
 　　　　　　　　　　　const isMiddleUp = landmarks[12].y < landmarks[10].y;
 　　　　　　　　　　　const isRingUp = landmarks[16].y < landmarks[14].y;
 　　　　　　　　　　　const isPinkyUp = landmarks[20].y < landmarks[18].y;
+                    const isFatherUp = landmarks[4].y < landmarks[2].y;
+                    
 
 
                     // 人差し指と中指だけが立ち､薬指と小指が曲がっている｢本物のﾋﾟｰｽ｣の時だけｼｬｯﾀｰを切る
-                    if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp) {
+                    if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp && isFatherUp) {
                         isCooldown = true;
                         statusText.innerText = "🖐️ パーをAIが検知！写真を保存します！";
                         captureAndSend();
