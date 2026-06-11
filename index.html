@@ -82,6 +82,8 @@
                // ✌️ ピースサインの検知と撮影処理
         // ✌️ MediaPipeのAIによる精密なピースサイン判定
         let isCooldown = false;
+        let wasGoo = false; // ★「直前がグーだったか」を記憶する変数
+
 
                 function startLightweightDetection() {
             // ★描画先のｷｬﾝﾊﾞｽ情報を取得
