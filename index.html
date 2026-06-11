@@ -82,7 +82,7 @@
                // ✌️ ピースサインの検知と撮影処理
         // ✌️ MediaPipeのAIによる精密なピースサイン判定
         let isCooldown = false;
-        let wasGoo = false; // ★「直前がグーだったか」を記憶する変数
+        let wasRock = false; // ★「直前がグーだったか」を記憶する変数
 
 
         function startLightweightDetection() {
@@ -127,25 +127,28 @@
                     const landmarks = results.multiHandLandmarks[0];
 
                     // MediaPipeの関節番号(人差し指先:8､根元:6､中指先:12､根元:10､薬指先:16､根元:14､小指先:20､根元:18＋親指追加しました)
-　　　　　　　　　　　const isIndexUp = landmarks[8].y < landmarks[6].y;
-　　　　　　　　　　　const isMiddleUp = landmarks[12].y < landmarks[10].y;
-　　　　　　　　　　　const isRingUp = landmarks[16].y < landmarks[14].y;
-　　　　　　　　　　　const isPinkyUp = landmarks[20].y < landmarks[18].y;
-                    const isFatherUp = landmarks[4].y < landmarks[2].y;
-                    
+                    const isIndexUp = landmarks[8].y < landmarks[5].y;
+                    const isMiddleUp = landmarks[12].y < landmarks[9].y;
+                    const isRingUp = landmarks[16].y < landmarks[13].y;
+                    const isPinkyUp = landmarks[20].y < landmarks[17].y;
 
+                    // グーとパーの状態を判定
+                    const isRock = !isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp;
+                    const isPaper = isIndexUp && isMiddleUp && isRingUp && isPinkyUp;
 
-                    // 人差し指と中指だけが立ち､薬指と小指が曲がっている｢本物のﾋﾟｰｽ｣の時だけｼｬｯﾀｰを切る
-                    if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp && isFatherUp) {
+                    if (isRock) {
+                        wasRock = true;
+                        statusText.innerText = "✊ グーを検知中...（パーを開いてください）";
+                    } else if (isPaper && wasRock) {
                         isCooldown = true;
-                        statusText.innerText = "🖐️ パーをAIが検知！写真を保存します！";
+                        wasRock = false; // フラグをリセット
+                        statusText.innerText = "🖐 グーからパーを検知！写真を保存します！";
                         captureAndSend();
-                    } else {
-                        statusText.innerText = "👋 パーのサインを待機中... カメラに手のひらを映してください。";
+                    } else if (!isPaper) {
+                        wasRock = false;
+                        statusText.innerText = "手のひらをカメラに向けてください";
                     }
-                } else {
-                    statusText.innerText = "📷 画面内に手を探しています...";
-                }
+
             });
 
             // ｶﾒﾗの映像を1ｺﾏずつMediaPipeのAIに送り続けます
