@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>ｶﾒﾗﾃｽﾄ × 自動カウントアプリ</title>
+    <title>卓球ドライブカウンター</title>
     <style>
-        /* 画面全体の余白をゼロにし、スクロールさせない設定 */
         html, body {
             margin: 0;
             padding: 0;
@@ -16,7 +15,6 @@
             font-family: sans-serif;
         }
 
-        /* 📷 カメラと全体を重ねるコンテナ（画面いっぱいに広げる） */
         .camera-container {
             position: absolute;
             top: 0;
@@ -26,14 +24,12 @@
             overflow: hidden;
         }
         
-        /* ビデオを隙間なく全画面表示（はみ出た部分は自動カット） */
         #webcam {
             width: 100%;
             height: 100%;
             object-fit: cover;
         }
 
-        /* 描画用キャンバスも全画面に重ねる */
         #output_canvas {
             position: absolute;
             top: 0;
@@ -42,17 +38,16 @@
             height: 100%;
         }
 
-        /* グリッド線のデザイン（3等分の網の目） */
+        /* 3等分グリッド線 */
         .grid-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             pointer-events: none;
         }
-        .grid-line-v1 { position: absolute; top: 0; left: 33.3%; width: 1px; height: 100%; background: rgba(255,255,255,0.4); }
-        .grid-line-v2 { position: absolute; top: 0; left: 66.6%; width: 1px; height: 100%; background: rgba(255,255,255,0.4); }
-        .grid-line-h1 { position: absolute; top: 33.3%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.4); }
-        .grid-line-h2 { position: absolute; top: 66.6%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.4); }
+        .grid-line-v1 { position: absolute; top: 0; left: 33.3%; width: 1px; height: 100%; background: rgba(255,255,255,0.3); }
+        .grid-line-v2 { position: absolute; top: 0; left: 66.6%; width: 1px; height: 100%; background: rgba(255,255,255,0.3); }
+        .grid-line-h1 { position: absolute; top: 33.3%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.3); }
+        .grid-line-h2 { position: absolute; top: 66.6%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.3); }
 
-        /* 📱 画面上部に被せる文字情報エリア */
         .ui-layer {
             position: absolute;
             top: 0;
@@ -61,13 +56,12 @@
             padding: 20px;
             box-sizing: border-box;
             background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%);
-            pointer-events: none; /* カメラ操作等の邪魔をしない */
+            pointer-events: none;
             text-align: center;
         }
 
         h1 { font-size: 1.1rem; margin: 0 0 5px 0; color: #fff; }
         
-        /* 🔢 カウント表示（全画面で見えやすいよう、少し半透明の黒背景の上に表示） */
         .counter-container {
             display: inline-block;
             background: rgba(0, 0, 0, 0.6);
@@ -87,7 +81,7 @@
 
         #status { font-weight: bold; color: #ddd; margin: 8px 0 0 0; font-size: 0.9rem; }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -103,15 +97,14 @@
     </div>
 
     <div class="ui-layer">
-        <h1>グー➔パーで自動カウント</h1>
+        <h1>卓球ドライブ判定カウンター（全身対象）</h1>
         <div class="counter-container">
-            カウント:<span id="count_num">0</span>
+            ドライブ数:<span id="count_num">0</span>
         </div>
         <p id="status">ｼｽﾃﾑ起動中...</p>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 
     <script>
         const video = document.getElementById('webcam');
@@ -119,79 +112,85 @@
         const countNum = document.getElementById('count_num');
 
         let currentCount = 0;
-        let wasRock = false;
+        
+        // スイングの状態を管理するフラグ
+        let isReady = false; // バックスイング（タメ）が完了したか
 
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
-            navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
+            // 全身を映すため、少し広めに撮影
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: 640, height: 480 } })
                 .then((stream) => {
                     video.srcObject = stream;
-                    statusText.innerText = "✅ 準備完了！手を開閉するとカウントします。";
-                    startLightweightDetection();
+                    statusText.innerText = "✅ 全身をカメラに映してください。";
+                    startPoseDetection();
                 })
                 .catch((err) => {
                     statusText.innerText = "❌ ｶﾒﾗの起動に失敗しました: " + err;
                 });
         }
 
-        function startLightweightDetection() {
+        function startPoseDetection() {
             const canvasElement = document.getElementById('output_canvas');
             const canvasCtx = canvasElement.getContext('2d');
 
-            const hands = new window.Hands({
-                locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file
+            // MediaPipe Poseの初期化
+            const pose = new window.Pose({
+                locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/pose/" + file
             });
 
-            hands.setOptions({
-                maxNumHands: 1,
+            pose.setOptions({
                 modelComplexity: 1,
-                minDetectionConfidence: 0.7,
-                minTrackingConfidence: 0.7
+                smoothLandmarks: true,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
             });
 
-            hands.onResults((results) => {
-                // 【重要】キャンバスのサイズを設定（画面全体の大きさに合わせる）
+            pose.onResults((results) => {
                 canvasElement.width = video.videoWidth || window.innerWidth;
                 canvasElement.height = video.videoHeight || window.innerHeight;
 
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-                if (results.multiHandLandmarks) {
-                    for (const landmarks of results.multiHandLandmarks) {
-                        window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 4});
-                        window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
+                // 全身の骨格を描画（青い線と赤い点で表示されます）
+                if (results.poseLandmarks) {
+                    window.drawConnectors(canvasCtx, results.poseLandmarks, window.POSE_CONNECTIONS, {color: '#00FFFF', lineWidth: 2});
+                    window.drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#FF0000', lineWidth: 1, radius: 3});
+                    
+                    // 関節データの取得（右利き用の判定用）
+                    const landmarks = results.poseLandmarks;
+                    const rightWrist = landmarks[16];  // 右手首
+                    const rightHip = landmarks[24];    // 右腰
+                    const rightShoulder = landmarks[12]; // 右肩
+
+                    // 1つの目安として、カメラに手首や腰がしっかり写っているか確認
+                    if (rightWrist && rightHip && rightShoulder) {
+                        
+                        // 【ステップ1: バックスイングの検知】
+                        // 右手首が右腰よりも低い位置（y座標が大きい）にあるとき、構え（タメ）ができていると判断
+                        if (!isReady && rightWrist.y > rightHip.y) {
+                            isReady = true;
+                            statusText.innerText = "🎾 構え（タメ）を検知！振ってください！";
+                        } 
+                        
+                        // 【ステップ2: スイング完了の検知】
+                        // 構え完了の状態から、右手首が右肩よりも高い位置（y座標が小さい）まで一気に振り上がったらドライブ成功
+                        else if (isReady && rightWrist.y < rightShoulder.y) {
+                            isReady = false; // フラグを戻す
+                            currentCount++;
+                            countNum.innerText = currentCount;
+                            statusText.innerText = `🔥 ドライブ成功！(通算: ${currentCount}回)`;
+                        }
                     }
-                }
-
-                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                    const landmarks = results.multiHandLandmarks[0];
-
-                    const isIndexUp = landmarks[8].y < landmarks[5].y;
-                    const isMiddleUp = landmarks[12].y < landmarks[9].y;
-                    const isRingUp = landmarks[16].y < landmarks[13].y;
-                    const isPinkyUp = landmarks[20].y < landmarks[17].y;
-
-                    const isRock = !isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp;
-                    const isPaper = isIndexUp && isMiddleUp && isRingUp && isPinkyUp;
-
-                    if (isRock) {
-                        wasRock = true;
-                        statusText.innerText = "✊ グーを検知中...（パーを開いてください）";
-                    } else if (isPaper && wasRock) {
-                        wasRock = false;
-                        currentCount++;
-                        countNum.innerText = currentCount;
-                        statusText.innerText = `🖐 カウントを増やしました（通算: ${currentCount}）`;
-                    } else if (!isPaper && !isRock) {
-                        wasRock = false;
-                        statusText.innerText = "手のひらをカメラに向けてください";
-                    }
+                } else {
+                    statusText.innerText = "人が映っていません。カメラから少し離れて全身を映してください。";
                 }
             });
 
+            // 1コマずつAIへ送信
             const frameLoop = async () => {
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                    await hands.send({ image: video });
+                    await pose.send({ image: video });
                 }
                 window.requestAnimationFrame(frameLoop);
             };
