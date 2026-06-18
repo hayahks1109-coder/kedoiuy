@@ -1,4 +1,4 @@
-<!DOCTYPE html>/*グーからパーにしたときに検知するものを作る　AIにリンクを読み込ませる　なんか　｝　が足りないらしい*/
+<!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
@@ -6,20 +6,18 @@
     <style>
         body { font-family: sans-serif; margin: 20px; }
         /* カメラとグリッド線を重ねるための設定 */
-.camera-container { position: relative; width: 100vw; height: 60vh; overflow: hidden; }
-#webcam { width: 100%; height: 100%; object-fit: cover; background-color: #ccc; }
+        .camera-container { position: relative; width: 100vw; height: 60vh; overflow: hidden; }
+        #webcam { width: 100%; height: 100%; object-fit: cover; background-color: #ccc; }
 
-/* グリッド線のデザイン（3等分の網の目） */
-.grid-overlay {
-    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    pointer-events: none; /* カメラ操作の邪魔をしない設定 */
-}
-.grid-line-v1 { position: absolute; top: 0; left: 33.3%; width: 1px; height: 100%; background: rgba(255,255,255,0.5); }
-.grid-line-v2 { position: absolute; top: 0; left: 66.6%; width: 1px; height: 100%; background: rgba(255,255,255,0.5); }
-.grid-line-h1 { position: absolute; top: 33.3%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.5); }
-.grid-line-h2 { position: absolute; top: 66.6%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.5); }
-
-
+        /* グリッド線のデザイン（3等分の網の目） */
+        .grid-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; /* カメラ操作の邪魔をしない設定 */
+        }
+        .grid-line-v1 { position: absolute; top: 0; left: 33.3%; width: 1px; height: 100%; background: rgba(255,255,255,0.5); }
+        .grid-line-v2 { position: absolute; top: 0; left: 66.6%; width: 1px; height: 100%; background: rgba(255,255,255,0.5); }
+        .grid-line-h1 { position: absolute; top: 33.3%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.5); }
+        .grid-line-h2 { position: absolute; top: 66.6%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.5); }
 
         #status { font-weight: bold; color: #333; }
     </style>
@@ -28,49 +26,42 @@
 <body>
     <h1>MediaPipe代替 × GAS 連携ﾃｽﾄ</h1>
     
-    <!-- ｶﾒﾗ映像の表示ｴﾘｱ -->
-    <!-- ｶﾒﾗ映像の表示ｴリア（グリッド線を重ねる箱に変えました） -->
-<div class="camera-container">
-    <video id="webcam" autoplay playsinline></video>
-    <canvas id="output_canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></canvas>
-    <div class="grid-overlay">
-        <div class="grid-line-v1"></div>
-        <div class="grid-line-v2"></div>
-        <div class="grid-line-h1"></div>
-        <div class="grid-line-h2"></div>
+    <div class="camera-container">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="output_canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></canvas>
+        <div class="grid-overlay">
+            <div class="grid-line-v1"></div>
+            <div class="grid-line-v2"></div>
+            <div class="grid-line-h1"></div>
+            <div class="grid-line-h2"></div>
+        </div>
     </div>
-</div>
 
     <br><br>
     
-    <!-- 状況を表示するﾃｷｽﾄ -->
     <p id="status">ｼｽﾃﾑ起動中...</p>
 
-    <!-- ★骨格描画ﾂｰﾙの読み込み(すべて全角にしています｡半角に直してご利用ください) -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 
     <script>
-
         const video = document.getElementById('webcam');
         const statusText = document.getElementById('status');
         
-        // 📌【23行目:点とｽﾗｯｼｭだけを半角に直したURLです】
-        // ｺﾋﾟﾍﾟしたあと､中の全角英数字(AKfy〜)の部分だけをご自身の半角の英数字に直接打ち直してください
+        // 📌【GASのURL】
         const GAS_URL = "https://script.google.com/macros/s/AKfycbysSGzFaaHnLPqtirCokY6SiVl98_qPUfA9g5QPBw6OjdOQ3anP9clYtYMfA65C-g3i/exec";
 
         let isSending = false;
 
-        // 1. ｴﾗｰの原因だったGoogleの外部AIﾓﾃﾞﾙを一切使わず､ｶﾒﾗを即座に起動します
+        // 1. ｶﾒﾗを即座に起動します
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
             navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
-
                 .then((stream) => {
                     video.srcObject = stream;
                     statusText.innerText = "✅ ｶﾒﾗ起動成功!手が映ったら自動でGASへ送信します｡";
                     
-                    // 2. 外部ﾗｲﾌﾞﾗﾘを使わず､ﾌﾞﾗｳｻﾞの標準処理で｢画面内に変化があるか｣を監視します
+                    // 2. 検出処理を開始
                     startLightweightDetection();
                 })
                 .catch((err) => {
@@ -78,19 +69,16 @@
                 });
         }
 
-        // 3. ﾌﾞﾗｳｻﾞ標準機能による簡易判定(CORSｴﾗｰが絶対に起きない安全な方法です)
-               // ✌️ ピースサインの検知と撮影処理
-        // ✌️ MediaPipeのAIによる精密なピースサイン判定
+        // 3. MediaPipeによるグー・パー検知と描画処理
         let isCooldown = false;
         let wasRock = false; // ★「直前がグーだったか」を記憶する変数
-
 
         function startLightweightDetection() {
             // ★描画先のｷｬﾝﾊﾞｽ情報を取得
             const canvasElement = document.getElementById('output_canvas');
             const canvasCtx = canvasElement.getContext('2d');
 
-            // MediaPipeの初期化(★URL部分をすべて全角にしています｡半角に直してください)
+            // MediaPipeの初期化（半角に修正）
             const hands = new window.Hands({
                 locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file
             });
@@ -120,14 +108,13 @@
                         window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
                     }
                 }
-            });
 
                 if (isCooldown) return;
 
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const landmarks = results.multiHandLandmarks[0];
 
-                    // MediaPipeの関節番号(人差し指先:8､根元:6､中指先:12､根元:10､薬指先:16､根元:14､小指先:20､根元:18＋親指追加しました)
+                    // MediaPipeの関節番号をもとに各指が立っているか判定
                     const isIndexUp = landmarks[8].y < landmarks[5].y;
                     const isMiddleUp = landmarks[12].y < landmarks[9].y;
                     const isRingUp = landmarks[16].y < landmarks[13].y;
@@ -149,12 +136,11 @@
                         wasRock = false;
                         statusText.innerText = "手のひらをカメラに向けてください";
                     }
-
-            });
+                }
+            }); // 👈 ここにあった中途半端な閉じカッコの位置を修正し、判定処理全体を包み込みました
 
             // ｶﾒﾗの映像を1ｺﾏずつMediaPipeのAIに送り続けます
             const frameLoop = async () => {
-                // ★ｶﾒﾗ映像の読み込みが完全に完了している時だけAIに送るｶﾞｰﾄﾞ処理
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
                     await hands.send({ image: video });
                 }
@@ -163,8 +149,7 @@
             frameLoop();
         }
 
-
-        // 写真を切り抜いてGASへ送信する関数（今のコードにある仕組みをそのまま画像用に適応しています）
+        // 写真を切り抜いてGASへ送信する関数
         async function captureAndSend() {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
@@ -185,25 +170,6 @@
             } catch (error) {
                 statusText.innerText = "❌ 送信失敗: " + error.message;
                 setTimeout(() => { isCooldown = false; }, 5000);
-            }
-        }
-
-
-        // 4. 先ほど｢送信成功｣を叩き出した､完璧に動くGASへの送信処理です
-        async function sendToGAS(message) {
-            isSending = true; 
-            try {
-                await fetch(GAS_URL, {
-                    method: "POST",
-                    mode: "cors",
-                    headers: { "Content-Type": "text/plain" },
-                    body: JSON.stringify({ resultMessage: message })
-                });
-                statusText.innerText = "🚀 GASへの送信に成功しました!(自動連動中)";
-                setTimeout(() => { isSending = false; }, 3000); // 3秒後に次の送信を許可
-            } catch (error) {
-                statusText.innerText = "❌ 送信失敗: " + error.message;
-                setTimeout(() => { isSending = false; }, 5000);
             }
         }
 
