@@ -78,7 +78,7 @@
             const canvasElement = document.getElementById('output_canvas');
             const canvasCtx = canvasElement.getContext('2d');
 
-            // MediaPipeの初期化（半角に修正）
+            // MediaPipeの初期化
             const hands = new window.Hands({
                 locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file
             });
@@ -137,7 +137,7 @@
                         statusText.innerText = "手のひらをカメラに向けてください";
                     }
                 }
-            }); // 👈 ここにあった中途半端な閉じカッコの位置を修正し、判定処理全体を包み込みました
+            }); // 👈 【修正ポイント】不要だった途中の閉じカッコを消去し、ここに一括でまとめました
 
             // ｶﾒﾗの映像を1ｺﾏずつMediaPipeのAIに送り続けます
             const frameLoop = async () => {
