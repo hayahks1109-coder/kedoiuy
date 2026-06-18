@@ -2,29 +2,65 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>ｶﾒﾗﾃｽﾄ × GAS連携ｱﾌﾟﾘ</title>
+    <title>ｶﾒﾗﾃｽﾄ × 自動カウントアプリ</title>
     <style>
-        body { font-family: sans-serif; margin: 20px; }
+        body { 
+            margin: 0;
+            padding: 20px;
+            background-color: #121212;
+            color: #ffffff;
+            font-family: sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+        h1 { font-size: 1.2rem; margin-bottom: 10px; }
+
         /* カメラとグリッド線を重ねるための設定 */
-        .camera-container { position: relative; width: 100vw; height: 60vh; overflow: hidden; }
-        #webcam { width: 100%; height: 100%; object-fit: cover; background-color: #ccc; }
+        .camera-container { 
+            position: relative; 
+            width: 90vw; 
+            max-width: 480px; 
+            aspect-ratio: 3 / 4; 
+            overflow: hidden; 
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            background-color: #000;
+        }
+        #webcam { width: 100%; height: 100%; object-fit: cover; }
 
         /* グリッド線のデザイン（3等分の網の目） */
         .grid-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             pointer-events: none; /* カメラ操作の邪魔をしない設定 */
         }
-        .grid-line-v1 { position: absolute; top: 0; left: 33.3%; width: 1px; height: 100%; background: rgba(255,255,255,0.5); }
-        .grid-line-v2 { position: absolute; top: 0; left: 66.6%; width: 1px; height: 100%; background: rgba(255,255,255,0.5); }
-        .grid-line-h1 { position: absolute; top: 33.3%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.5); }
-        .grid-line-h2 { position: absolute; top: 66.6%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.5); }
+        .grid-line-v1 { position: absolute; top: 0; left: 33.3%; width: 1px; height: 100%; background: rgba(255,255,255,0.4); }
+        .grid-line-v2 { position: absolute; top: 0; left: 66.6%; width: 1px; height: 100%; background: rgba(255,255,255,0.4); }
+        .grid-line-h1 { position: absolute; top: 33.3%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.4); }
+        .grid-line-h2 { position: absolute; top: 66.6%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.4); }
 
-        #status { font-weight: bold; color: #333; }
+        /* 🔢 カウント表示のデザイン */
+        .counter-container {
+            margin-top: 15px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            text-align: center;
+        }
+        #count_num {
+            font-size: 2.5rem;
+            color: #00FF66; /* 目立つ黄緑色 */
+            margin-left: 10px;
+        }
+
+        #status { font-weight: bold; color: #ccc; margin-top: 10px; text-align: center; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
-    <h1>MediaPipe代替 × GAS 連携ﾃｽﾄ</h1>
+    <h1>グー➔パーで自動カウント</h1>
     
     <div class="camera-container">
         <video id="webcam" autoplay playsinline muted></video>
@@ -37,8 +73,10 @@
         </div>
     </div>
 
-    <br><br>
-    
+    <div class="counter-container">
+        カウント:<span id="count_num">0</span>
+    </div>
+
     <p id="status">ｼｽﾃﾑ起動中...</p>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -47,11 +85,10 @@
     <script>
         const video = document.getElementById('webcam');
         const statusText = document.getElementById('status');
-        
-        // 📌【GASのURL】
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbysSGzFaaHnLPqtirCokY6SiVl98_qPUfA9g5QPBw6OjdOQ3anP9clYtYMfA65C-g3i/exec";
+        const countNum = document.getElementById('count_num');
 
-        let isSending = false;
+        let currentCount = 0; // カウントを記憶する変数
+        let wasRock = false;  // 直前がグーだったかを記憶する変数
 
         // 1. ｶﾒﾗを即座に起動します
         function startCamera() {
@@ -59,7 +96,7 @@
             navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
                 .then((stream) => {
                     video.srcObject = stream;
-                    statusText.innerText = "✅ ｶﾒﾗ起動成功!手が映ったら自動でGASへ送信します｡";
+                    statusText.innerText = "✅ 準備完了！手を開閉するとカウントします。";
                     
                     // 2. 検出処理を開始
                     startLightweightDetection();
@@ -70,11 +107,7 @@
         }
 
         // 3. MediaPipeによるグー・パー検知と描画処理
-        let isCooldown = false;
-        let wasRock = false; // ★「直前がグーだったか」を記憶する変数
-
         function startLightweightDetection() {
-            // ★描画先のｷｬﾝﾊﾞｽ情報を取得
             const canvasElement = document.getElementById('output_canvas');
             const canvasCtx = canvasElement.getContext('2d');
 
@@ -92,29 +125,23 @@
 
             // AIが指の形を判定したときの処理
             hands.onResults((results) => {
-                // ★ｷｬﾝﾊﾞｽのｻｲｽﾞをｶﾒﾗ映像に合わせる
                 canvasElement.width = video.videoWidth || 640;
                 canvasElement.height = video.videoHeight || 480;
 
-                // ★古い描画を一度消してｸﾘｱにする
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-                // ★画面に手のﾎﾞｰﾝ(骨格とﾄﾞｯﾄ)を描画する処理
+                // 画面に手の骨格を描画
                 if (results.multiHandLandmarks) {
                     for (const landmarks of results.multiHandLandmarks) {
-                        // 白い線で骨格を繋ぐ
                         window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 4});
-                        // 赤いﾄﾞｯﾄで関節を描く
                         window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
                     }
                 }
 
-                if (isCooldown) return;
-
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const landmarks = results.multiHandLandmarks[0];
 
-                    // MediaPipeの関節番号をもとに各指が立っているか判定
+                    // 各指が立っているか判定（人差し指〜小指）
                     const isIndexUp = landmarks[8].y < landmarks[5].y;
                     const isMiddleUp = landmarks[12].y < landmarks[9].y;
                     const isRingUp = landmarks[16].y < landmarks[13].y;
@@ -128,16 +155,20 @@
                         wasRock = true;
                         statusText.innerText = "✊ グーを検知中...（パーを開いてください）";
                     } else if (isPaper && wasRock) {
-                        isCooldown = true;
+                        // 【変更点】写真を送る・5秒待つ処理をすべて消し、カウントアップに差し替えました！
                         wasRock = false; // フラグをリセット
-                        statusText.innerText = "🖐 グーからパーを検知！写真を保存します！";
-                        captureAndSend();
-                    } else if (!isPaper) {
+                        
+                        currentCount++; // カウントを1増やす
+                        countNum.innerText = currentCount; // 画面の数字を書き換え
+                        
+                        statusText.innerText = `🖐 グーからパーを検知！カウントを増やしました（通算: ${currentCount}）`;
+                    } else if (!isPaper && !isRock) {
+                        // 手が中途半端な形のときはリセット
                         wasRock = false;
                         statusText.innerText = "手のひらをカメラに向けてください";
                     }
                 }
-            }); // 👈 【修正ポイント】不要だった途中の閉じカッコを消去し、ここに一括でまとめました
+            });
 
             // ｶﾒﾗの映像を1ｺﾏずつMediaPipeのAIに送り続けます
             const frameLoop = async () => {
@@ -147,30 +178,6 @@
                 window.requestAnimationFrame(frameLoop);
             };
             frameLoop();
-        }
-
-        // 写真を切り抜いてGASへ送信する関数
-        async function captureAndSend() {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = video.videoWidth || 640;
-            canvas.height = video.videoHeight || 480;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const imageDataUrl = canvas.toDataURL('image/jpeg', 0.8);
-            
-            try {
-                await fetch(GAS_URL, {
-                    method: "POST",
-                    mode: "cors",
-                    headers: { "Content-Type": "text/plain" },
-                    body: JSON.stringify({ image: imageDataUrl })
-                });
-                statusText.innerText = "🚀 Googleドライブに写真を保存しました！(5秒間待機)";
-                setTimeout(() => { isCooldown = false; }, 5000);
-            } catch (error) {
-                statusText.innerText = "❌ 送信失敗: " + error.message;
-                setTimeout(() => { isCooldown = false; }, 5000);
-            }
         }
 
         // 画面が読み込まれたら即座に実行
