@@ -2,69 +2,98 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>ｶﾒﾗﾃｽﾄ × 自動カウントアプリ</title>
     <style>
-        body { 
+        /* 画面全体の余白をゼロにし、スクロールさせない設定 */
+        html, body {
             margin: 0;
-            padding: 20px;
-            background-color: #121212;
-            color: #ffffff;
-            font-family: sans-serif; 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            justify-content: center;
-            min-height: 100vh;
-            box-sizing: border-box;
-        }
-        h1 { font-size: 1.2rem; margin-bottom: 10px; }
-
-        /* カメラとグリッド線を重ねるための設定 */
-        .camera-container { 
-            position: relative; 
-            width: 90vw; 
-            max-width: 480px; 
-            aspect-ratio: 3 / 4; 
-            overflow: hidden; 
-            border-radius: 12px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
             background-color: #000;
+            font-family: sans-serif;
         }
-        #webcam { width: 100%; height: 100%; object-fit: cover; }
+
+        /* 📷 カメラと全体を重ねるコンテナ（画面いっぱいに広げる） */
+        .camera-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* ビデオを隙間なく全画面表示（はみ出た部分は自動カット） */
+        #webcam {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* 描画用キャンバスも全画面に重ねる */
+        #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
 
         /* グリッド線のデザイン（3等分の網の目） */
         .grid-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none; /* カメラ操作の邪魔をしない設定 */
+            pointer-events: none;
         }
         .grid-line-v1 { position: absolute; top: 0; left: 33.3%; width: 1px; height: 100%; background: rgba(255,255,255,0.4); }
         .grid-line-v2 { position: absolute; top: 0; left: 66.6%; width: 1px; height: 100%; background: rgba(255,255,255,0.4); }
         .grid-line-h1 { position: absolute; top: 33.3%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.4); }
         .grid-line-h2 { position: absolute; top: 66.6%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.4); }
 
-        /* 🔢 カウント表示のデザイン */
-        .counter-container {
-            margin-top: 15px;
-            font-size: 1.5rem;
-            font-weight: bold;
+        /* 📱 画面上部に被せる文字情報エリア */
+        .ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 20px;
+            box-sizing: border-box;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%);
+            pointer-events: none; /* カメラ操作等の邪魔をしない */
             text-align: center;
         }
+
+        h1 { font-size: 1.1rem; margin: 0 0 5px 0; color: #fff; }
+        
+        /* 🔢 カウント表示（全画面で見えやすいよう、少し半透明の黒背景の上に表示） */
+        .counter-container {
+            display: inline-block;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 20px;
+            border-radius: 30px;
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: #fff;
+            margin-top: 5px;
+        }
         #count_num {
-            font-size: 2.5rem;
-            color: #00FF66; /* 目立つ黄緑色 */
+            font-size: 2.2rem;
+            color: #00FF66;
             margin-left: 10px;
+            vertical-align: middle;
         }
 
-        #status { font-weight: bold; color: #ccc; margin-top: 10px; text-align: center; }
+        #status { font-weight: bold; color: #ddd; margin: 8px 0 0 0; font-size: 0.9rem; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
-    <h1>グー➔パーで自動カウント</h1>
-    
+
     <div class="camera-container">
         <video id="webcam" autoplay playsinline muted></video>
-        <canvas id="output_canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></canvas>
+        <canvas id="output_canvas"></canvas>
         <div class="grid-overlay">
             <div class="grid-line-v1"></div>
             <div class="grid-line-v2"></div>
@@ -73,11 +102,13 @@
         </div>
     </div>
 
-    <div class="counter-container">
-        カウント:<span id="count_num">0</span>
+    <div class="ui-layer">
+        <h1>グー➔パーで自動カウント</h1>
+        <div class="counter-container">
+            カウント:<span id="count_num">0</span>
+        </div>
+        <p id="status">ｼｽﾃﾑ起動中...</p>
     </div>
-
-    <p id="status">ｼｽﾃﾑ起動中...</p>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -87,18 +118,15 @@
         const statusText = document.getElementById('status');
         const countNum = document.getElementById('count_num');
 
-        let currentCount = 0; // カウントを記憶する変数
-        let wasRock = false;  // 直前がグーだったかを記憶する変数
+        let currentCount = 0;
+        let wasRock = false;
 
-        // 1. ｶﾒﾗを即座に起動します
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
             navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
                 .then((stream) => {
                     video.srcObject = stream;
                     statusText.innerText = "✅ 準備完了！手を開閉するとカウントします。";
-                    
-                    // 2. 検出処理を開始
                     startLightweightDetection();
                 })
                 .catch((err) => {
@@ -106,12 +134,10 @@
                 });
         }
 
-        // 3. MediaPipeによるグー・パー検知と描画処理
         function startLightweightDetection() {
             const canvasElement = document.getElementById('output_canvas');
             const canvasCtx = canvasElement.getContext('2d');
 
-            // MediaPipeの初期化
             const hands = new window.Hands({
                 locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file
             });
@@ -123,14 +149,13 @@
                 minTrackingConfidence: 0.7
             });
 
-            // AIが指の形を判定したときの処理
             hands.onResults((results) => {
-                canvasElement.width = video.videoWidth || 640;
-                canvasElement.height = video.videoHeight || 480;
+                // 【重要】キャンバスのサイズを設定（画面全体の大きさに合わせる）
+                canvasElement.width = video.videoWidth || window.innerWidth;
+                canvasElement.height = video.videoHeight || window.innerHeight;
 
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-                // 画面に手の骨格を描画
                 if (results.multiHandLandmarks) {
                     for (const landmarks of results.multiHandLandmarks) {
                         window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 4});
@@ -141,13 +166,11 @@
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const landmarks = results.multiHandLandmarks[0];
 
-                    // 各指が立っているか判定（人差し指〜小指）
                     const isIndexUp = landmarks[8].y < landmarks[5].y;
                     const isMiddleUp = landmarks[12].y < landmarks[9].y;
                     const isRingUp = landmarks[16].y < landmarks[13].y;
                     const isPinkyUp = landmarks[20].y < landmarks[17].y;
 
-                    // グーとパーの状態を判定
                     const isRock = !isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp;
                     const isPaper = isIndexUp && isMiddleUp && isRingUp && isPinkyUp;
 
@@ -155,22 +178,17 @@
                         wasRock = true;
                         statusText.innerText = "✊ グーを検知中...（パーを開いてください）";
                     } else if (isPaper && wasRock) {
-                        // 【変更点】写真を送る・5秒待つ処理をすべて消し、カウントアップに差し替えました！
-                        wasRock = false; // フラグをリセット
-                        
-                        currentCount++; // カウントを1増やす
-                        countNum.innerText = currentCount; // 画面の数字を書き換え
-                        
-                        statusText.innerText = `🖐 グーからパーを検知！カウントを増やしました（通算: ${currentCount}）`;
+                        wasRock = false;
+                        currentCount++;
+                        countNum.innerText = currentCount;
+                        statusText.innerText = `🖐 カウントを増やしました（通算: ${currentCount}）`;
                     } else if (!isPaper && !isRock) {
-                        // 手が中途半端な形のときはリセット
                         wasRock = false;
                         statusText.innerText = "手のひらをカメラに向けてください";
                     }
                 }
             });
 
-            // ｶﾒﾗの映像を1ｺﾏずつMediaPipeのAIに送り続けます
             const frameLoop = async () => {
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
                     await hands.send({ image: video });
@@ -180,7 +198,6 @@
             frameLoop();
         }
 
-        // 画面が読み込まれたら即座に実行
         window.addEventListener('load', startCamera);
     </script>
 </body>
