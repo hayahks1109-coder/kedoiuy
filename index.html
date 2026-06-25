@@ -105,4 +105,100 @@
     <div class="ui-layer">
         <h1>グー➔パーで自動カウント</h1>
         <div class="counter-container">
-            カウント:<span id="count_num
+            カウント:<span id="count_num">0</span>
+        </div>
+        <p id="status">ｼｽﾃﾑ起動中...</p>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const statusText = document.getElementById('status');
+        const countNum = document.getElementById('count_num');
+
+        let currentCount = 0;
+        let wasRock = false;
+
+        function startCamera() {
+            statusText.innerText = "ｶﾒﾗを起動しています...";
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
+                .then((stream) => {
+                    video.srcObject = stream;
+                    statusText.innerText = "✅ 準備完了！手を開閉するとカウントします。";
+                    startLightweightDetection();
+                })
+                .catch((err) => {
+                    statusText.innerText = "❌ ｶﾒﾗの起動に失敗しました: " + err;
+                });
+        }
+
+        function startLightweightDetection() {
+            const canvasElement = document.getElementById('output_canvas');
+            const canvasCtx = canvasElement.getContext('2d');
+
+            const hands = new window.Hands({
+                locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.7,
+                minTrackingConfidence: 0.7
+            });
+
+            hands.onResults((results) => {
+                // 【重要】キャンバスのサイズを設定（画面全体の大きさに合わせる）
+                canvasElement.width = video.videoWidth || window.innerWidth;
+                canvasElement.height = video.videoHeight || window.innerHeight;
+
+                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+                if (results.multiHandLandmarks) {
+                    for (const landmarks of results.multiHandLandmarks) {
+                        window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 4});
+                        window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
+                    }
+                }
+
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    const landmarks = results.multiHandLandmarks[0];
+
+                    const isIndexUp = landmarks[8].y < landmarks[5].y;
+                    const isMiddleUp = landmarks[12].y < landmarks[9].y;
+                    const isRingUp = landmarks[16].y < landmarks[13].y;
+                    const isPinkyUp = landmarks[20].y < landmarks[17].y;
+
+                    const isRock = !isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp;
+                    const isPaper = isIndexUp && isMiddleUp && isRingUp && isPinkyUp;
+
+                    if (isRock) {
+                        wasRock = true;
+                        statusText.innerText = "✊ グーを検知中...（パーを開いてください）";
+                    } else if (isPaper && wasRock) {
+                        wasRock = false;
+                        currentCount++;
+                        countNum.innerText = currentCount;
+                        statusText.innerText = `🖐 カウントを増やしました（通算: ${currentCount}）`;
+                    } else if (!isPaper && !isRock) {
+                        wasRock = false;
+                        statusText.innerText = "手のひらをカメラに向けてください";
+                    }
+                }
+            });
+
+            const frameLoop = async () => {
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    await hands.send({ image: video });
+                }
+                window.requestAnimationFrame(frameLoop);
+            };
+            frameLoop();
+        }
+
+        window.addEventListener('load', startCamera);
+    </script>
+</body>
+</html>
