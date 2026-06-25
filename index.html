@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>ｶﾒﾗﾃｽﾄ × 自動カウントアプリ</title>
+    <title>ｶﾒﾗﾃｽﾄ × 複数自動カウントアプリ</title>
     <style>
-        /* 画面全体の余白をゼロにし、スクロールさせない設定 */
         html, body {
             margin: 0;
             padding: 0;
@@ -16,76 +15,60 @@
             font-family: sans-serif;
         }
 
-        /* 📷 カメラと全体を重ねるコンテナ（画面いっぱいに広げる） */
         .camera-container {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
+            top: 0; left: 0; width: 100vw; height: 100vh;
             overflow: hidden;
         }
         
-        /* ビデオを隙間なく全画面表示（はみ出た部分は自動カット） */
-        #webcam {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
+        #webcam { width: 100%; height: 100%; object-fit: cover; }
+        #output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 
-        /* 描画用キャンバスも全画面に重ねる */
-        #output_canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
-
-        /* グリッド線のデザイン（3等分の網の目） */
-        .grid-overlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none;
-        }
+        /* 3等分グリッド線 */
+        .grid-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
         .grid-line-v1 { position: absolute; top: 0; left: 33.3%; width: 1px; height: 100%; background: rgba(255,255,255,0.4); }
         .grid-line-v2 { position: absolute; top: 0; left: 66.6%; width: 1px; height: 100%; background: rgba(255,255,255,0.4); }
         .grid-line-h1 { position: absolute; top: 33.3%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.4); }
         .grid-line-h2 { position: absolute; top: 66.6%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.4); }
 
-        /* 📱 画面上部に被せる文字情報エリア */
+        /* 📱 画面上部のUIレイヤー */
         .ui-layer {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
+            top: 0; left: 0; width: 100%;
             padding: 20px;
             box-sizing: border-box;
             background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%);
-            pointer-events: none; /* カメラ操作等の邪魔をしない */
+            pointer-events: none;
             text-align: center;
         }
 
-        h1 { font-size: 1.1rem; margin: 0 0 5px 0; color: #fff; }
+        h1 { font-size: 1.1rem; margin: 0 0 10px 0; color: #fff; }
         
-        /* 🔢 カウント表示（全画面で見えやすいよう、少し半透明の黒背景の上に表示） */
-        .counter-container {
-            display: inline-block;
-            background: rgba(0, 0, 0, 0.6);
-            padding: 10px 20px;
-            border-radius: 30px;
-            font-size: 1.3rem;
-            font-weight: bold;
-            color: #fff;
+        /* 🔢 2つのカウントを表示するコンテナ */
+        .counters-wrapper {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
             margin-top: 5px;
         }
-        #count_num {
-            font-size: 2.2rem;
-            color: #00FF66;
-            margin-left: 10px;
+        .counter-box {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            color: #fff;
+            min-width: 120px;
+        }
+        .count-num {
+            font-size: 2rem;
+            margin-left: 8px;
             vertical-align: middle;
         }
+        #count_num1 { color: #00FF66; } /* カウント1は黄緑 */
+        #count_num2 { color: #FFCC00; } /* カウント2はオレンジ黄 */
 
-        #status { font-weight: bold; color: #ddd; margin: 8px 0 0 0; font-size: 0.9rem; }
+        #status { font-weight: bold; color: #ddd; margin: 12px 0 0 0; font-size: 0.9rem; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
@@ -103,9 +86,10 @@
     </div>
 
     <div class="ui-layer">
-        <h1>グー➔パーで自動カウント</h1>
-        <div class="counter-container">
-            カウント:<span id="count_num">0</span>
+        <h1>マルチ手動カウント（✊➔🖐 / ✌➔🖐）</h1>
+        <div class="counters-wrapper">
+            <div class="counter-box">✊➔🖐: <span id="count_num1" class="count-num">0</span></div>
+            <div class="counter-box">✌➔🖐: <span id="count_num2" class="count-num">0</span></div>
         </div>
         <p id="status">ｼｽﾃﾑ起動中...</p>
     </div>
@@ -116,17 +100,23 @@
     <script>
         const video = document.getElementById('webcam');
         const statusText = document.getElementById('status');
-        const countNum = document.getElementById('count_num');
+        const countNum1 = document.getElementById('count_num1');
+        const countNum2 = document.getElementById('count_num2');
 
-        let currentCount = 0;
+        // それぞれのカウント用の変数
+        let count1 = 0;
+        let count2 = 0;
+
+        // 直前の状態を記憶するフラグ（別々に用意します）
         let wasRock = false;
+        let wasScissors = false;
 
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
             navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
                 .then((stream) => {
                     video.srcObject = stream;
-                    statusText.innerText = "✅ 準備完了！手を開閉するとカウントします。";
+                    statusText.innerText = "✅ 準備完了！✊➔🖐 または ✌➔🖐 で数え分けます。";
                     startLightweightDetection();
                 })
                 .catch((err) => {
@@ -150,7 +140,6 @@
             });
 
             hands.onResults((results) => {
-                // 【重要】キャンバスのサイズを設定（画面全体の大きさに合わせる）
                 canvasElement.width = video.videoWidth || window.innerWidth;
                 canvasElement.height = video.videoHeight || window.innerHeight;
 
@@ -166,24 +155,48 @@
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     const landmarks = results.multiHandLandmarks[0];
 
+                    // 各指が立っているか判定（人差し指、中指、薬指、小指）
                     const isIndexUp = landmarks[8].y < landmarks[5].y;
                     const isMiddleUp = landmarks[12].y < landmarks[9].y;
                     const isRingUp = landmarks[16].y < landmarks[13].y;
                     const isPinkyUp = landmarks[20].y < landmarks[17].y;
 
+                    // ✊ グー、🖐 パー、✌ チョキの判定ルール
                     const isRock = !isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp;
                     const isPaper = isIndexUp && isMiddleUp && isRingUp && isPinkyUp;
+                    const isScissors = isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp; // 人差し指と中指だけ立っている
 
+                    // 🧠 条件分岐の追加部分
                     if (isRock) {
                         wasRock = true;
-                        statusText.innerText = "✊ グーを検知中...（パーを開いてください）";
-                    } else if (isPaper && wasRock) {
+                        wasScissors = false; // チョキの記憶は消す
+                        statusText.innerText = "✊ グーを検知中...（パーを開くと左が増えます）";
+                    } 
+                    else if (isScissors) {
+                        wasScissors = true;
+                        wasRock = false; // グーの記憶は消す
+                        statusText.innerText = "✌ チョキを検知中...（パーを開くと右が増えます）";
+                    } 
+                    else if (isPaper) {
+                        // ✊ から 🖐 になった場合
+                        if (wasRock) {
+                            wasRock = false;
+                            count1++;
+                            countNum1.innerText = count1;
+                            statusText.innerText = `🖐 グー➔パーを検知！ カウント1: ${count1}`;
+                        } 
+                        // ✌ から 🖐 になった場合
+                        else if (wasScissors) {
+                            wasScissors = false;
+                            count2++;
+                            countNum2.innerText = count2;
+                            statusText.innerText = `🖐 チョキ➔パーを検知！ カウント2: ${count2}`;
+                        }
+                    } 
+                    else if (!isPaper && !isRock && !isScissors) {
+                        // どの形でもない中途半端な手の時は記憶をリセット
                         wasRock = false;
-                        currentCount++;
-                        countNum.innerText = currentCount;
-                        statusText.innerText = `🖐 カウントを増やしました（通算: ${currentCount}）`;
-                    } else if (!isPaper && !isRock) {
-                        wasRock = false;
+                        wasScissors = false;
                         statusText.innerText = "手のひらをカメラに向けてください";
                     }
                 }
