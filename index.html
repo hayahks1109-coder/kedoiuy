@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>ｶﾒﾗﾃｽﾄ × ロックオン式カウントアプリ</title>
+    <title>パー開始型・自動カウントアプリ</title>
     <style>
         html, body {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -34,7 +34,7 @@
         }
 
         h1 { font-size: 1.1rem; margin: 0 0 5px 0; color: #fff; }
-        .sub-title { font-size: 0.8rem; color: #aaa; margin: 0 0 10px 0; }
+        .sub-title { font-size: 0.8rem; color: #00FF66; margin: 0 0 10px 0; font-weight: bold; }
         
         .counters-wrapper { display: flex; justify-content: center; gap: 15px; margin-top: 5px; }
         .counter-box {
@@ -53,7 +53,7 @@
 
     <div class="camera-container">
         <video id="webcam" autoplay playsinline muted></video>
-        <canvas id="output_canvas" id="tap_layer"></canvas>
+        <canvas id="output_canvas"></canvas>
         <div class="grid-overlay">
             <div class="grid-line-v1"></div>
             <div class="grid-line-v2"></div>
@@ -63,8 +63,8 @@
     </div>
 
     <div class="ui-layer">
-        <h1>ターゲット選択式・自動カウンター</h1>
-        <div class="sub-title">画面内の手をタップするとロックオン（緑色に変化）します</div>
+        <h1>パー開始型・自動カウンター</h1>
+        <div class="sub-title">🖐（パー）を作った手だけを自動でロックオンします</div>
         <div class="counters-wrapper">
             <div class="counter-box">✊➔🖐: <span id="count_num1" class="count-num">0</span></div>
             <div class="counter-box">✌➔🖐: <span id="count_num2" class="count-num">0</span></div>
@@ -85,19 +85,20 @@
 
         let count1 = 0;
         let count2 = 0;
+        
+        // カウント管理用の状態フラグ
         let wasRock = false;
         let wasScissors = false;
-
-        // 🎯 ロックオン管理用変数
-        let lastHandsData = []; // 直近の手の座標データを一時保存する配列
-        let lockedHandIndex = null; // ロックオン中のインデックス番号（nullなら未固定）
+        
+        // 🔒 ロックオンしている手があるかどうかを管理するフラグ
+        let isTrackingStarted = false;
 
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
-            navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: 640, height: 480 } })
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
                 .then((stream) => {
                     video.srcObject = stream;
-                    statusText.innerText = "✅ 追いたい手を画面上でタップして選択してください。";
+                    statusText.innerText = "✅ 準備完了。まずはカメラに🖐（パー）を映してください。";
                     startLightweightDetection();
                 })
                 .catch((err) => {
@@ -105,48 +106,17 @@
                 });
         }
 
-        // 👆 画面タップ時のロックオン処理
-        canvasElement.addEventListener('click', (event) => {
-            const rect = canvasElement.getBoundingClientRect();
-            // タップされた比率座標（0.0 〜 1.0）を計算
-            const tapX = (event.clientX - rect.left) / rect.width;
-            const tapY = (event.clientY - rect.top) / rect.height;
-
-            let closestIndex = null;
-            let minDistance = 0.15; // タップを認める最大距離（これより遠ければ無視）
-
-            // 映っている全ての手の手首（0番）の座標と、タップされた位置の距離を比較
-            lastHandsData.forEach((landmarks, idx) => {
-                const wrist = landmarks[0];
-                const distance = Math.sqrt(Math.pow(wrist.x - tapX, 2) + Math.pow(wrist.y - tapY, 2));
-                if (distance < minDistance) {
-                    minDistance = distance;
-                    closestIndex = idx;
-                }
-            });
-
-            if (closestIndex !== null) {
-                lockedHandIndex = closestIndex;
-                statusText.innerText = `🎯 ターゲットをロックオンしました！`;
-                // ターゲット切り替え時は一度状態をクリア
-                wasRock = false;
-                wasScissors = false;
-            } else {
-                lockedHandIndex = null;
-                statusText.innerText = `🔓 ロックオンを解除しました（一番近い手を追います）`;
-            }
-        });
-
         function startLightweightDetection() {
             const hands = new window.Hands({
                 locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file
             });
 
+            // 元の認識精度に戻しています（maxNumHands: 4）
             hands.setOptions({
-                maxNumHands: 4, // 画面内に最大4個の手を同時に認識可能にする
+                maxNumHands: 4, 
                 modelComplexity: 1,
-                minDetectionConfidence: 0.6,
-                minTrackingConfidence: 0.6
+                minDetectionConfidence: 0.7,
+                minTrackingConfidence: 0.7
             });
 
             hands.onResults((results) => {
@@ -154,40 +124,34 @@
                 canvasElement.height = video.videoHeight || window.innerHeight;
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-                // タップ判定用に、現在のすべての手のデータをグローバル変数に退避
-                lastHandsData = results.multiHandLandmarks || [];
-
-                if (results.multiHandLandmarks) {
-                    // 💡 条件に合う「追いかける手」を決定する
-                    let activeIndex = 0; // デフォルトは最初に見つかった手
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     
-                    // もしロックオン中のインデックスが存在し、かつその手がまだ画面内にあれば
-                    if (lockedHandIndex !== null && results.multiHandLandmarks[lockedHandIndex]) {
-                        activeIndex = lockedHandIndex;
-                    } else if (lockedHandIndex !== null) {
-                        // ロックオンしていた手が画面外に消えたら解除
-                        lockedHandIndex = null;
-                        statusText.innerText = "⚠️ ターゲットを見失いました。再度タップしてください。";
+                    let targetLandmarks = null;
+
+                    // 🔍 映っている手の中から条件に合う手を探す
+                    for (const landmarks of results.multiHandLandmarks) {
+                        const isIndexUp = landmarks[8].y < landmarks[5].y;
+                        const isMiddleUp = landmarks[12].y < landmarks[9].y;
+                        const isRingUp = landmarks[16].y < landmarks[13].y;
+                        const isPinkyUp = landmarks[20].y < landmarks[17].y;
+                        
+                        const isPaper = isIndexUp && isMiddleUp && isRingUp && isPinkyUp;
+
+                        // 💡 【条件変更】すでにロックオン中であるか、今「🖐（パー）」を出した手をターゲットにする
+                        if (isTrackingStarted || isPaper) {
+                            targetLandmarks = landmarks;
+                            break; 
+                        }
                     }
 
-                    // 🎨 すべての手の骨格を描画（色分け処理）
-                    results.multiHandLandmarks.forEach((landmarks, idx) => {
-                        const isTarget = (idx === activeIndex);
-                        
-                        // ターゲットなら「緑色（#00FF66）」、それ以外は「白色（#FFFFFF）」
-                        const lineColor = isTarget ? '#00FF66' : '#FFFFFF';
-                        const dotColor = isTarget ? '#FF0000' : '#888888';
-                        const size = isTarget ? 4 : 2;
+                    // 🎯 ターゲットの手だけを処理
+                    if (targetLandmarks) {
+                        const landmarks = targetLandmarks;
 
-                        window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: lineColor, lineWidth: isTarget ? 4 : 2});
-                        window.drawLandmarks(canvasCtx, landmarks, {color: dotColor, lineWidth: 1, radius: size});
-                    });
+                        // 骨格を描画（ロックオン中の手は緑、他は白）
+                        window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#00FF66', lineWidth: 4});
+                        window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
 
-                    // 🧠 ターゲットに指定された「1つの手」だけを使って判定を行う
-                    if (results.multiHandLandmarks[activeIndex]) {
-                        const landmarks = results.multiHandLandmarks[activeIndex];
-
-                        // 各指が立っているか判定
                         const isIndexUp = landmarks[8].y < landmarks[5].y;
                         const isMiddleUp = landmarks[12].y < landmarks[9].y;
                         const isRingUp = landmarks[16].y < landmarks[13].y;
@@ -197,40 +161,47 @@
                         const isPaper = isIndexUp && isMiddleUp && isRingUp && isPinkyUp;
                         const isScissors = isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp;
 
+                        // ロックオンが開始されたことを記憶
+                        isTrackingStarted = true;
+
                         if (isRock) {
                             wasRock = true;
                             wasScissors = false;
-                            statusText.innerText = "✊ ロック中の手が『グー』を構成中...（パーで左＋1）";
+                            statusText.innerText = "✊ グーに変化しました（パーで左＋1）";
                         } 
                         else if (isScissors) {
                             wasScissors = true;
                             wasRock = false;
-                            statusText.innerText = "✌ ロック中の手が『チョキ』を構成中...（パーで右＋1）";
+                            statusText.innerText = "✌ チョキに変化しました（パーで右＋1）";
                         } 
                         else if (isPaper) {
                             if (wasRock) {
                                 wasRock = false;
                                 count1++;
                                 countNum1.innerText = count1;
-                                statusText.innerText = `🖐 カウント1（✊➔🖐）を更新: ${count1}`;
+                                statusText.innerText = `🖐 パーに戻りました！ カウント1: ${count1}`;
                             } 
                             else if (wasScissors) {
                                 wasScissors = false;
                                 count2++;
                                 countNum2.innerText = count2;
-                                statusText.innerText = `🖐 カウント2（✌➔🖐）を更新: ${count2}`;
+                                statusText.innerText = `🖐 パーに戻りました！ カウント2: ${count2}`;
+                            } else {
+                                statusText.innerText = "🖐 パーを認識中... ✊か✌に形を変えてください";
                             }
-                        } 
+                        }
                         else if (!isPaper && !isRock && !isScissors) {
                             wasRock = false;
                             wasScissors = false;
                         }
+                    } else {
+                        statusText.innerText = "🖐（パー）をカメラに映すとロックオンを開始します";
                     }
                 } else {
-                    // 手がひとつも映っていない場合
-                    if (lockedHandIndex !== null) {
-                        lockedHandIndex = null; // ロック自動解除
-                    }
+                    statusText.innerText = "手が映っていません";
+                    wasRock = false;
+                    wasScissors = false;
+                    isTrackingStarted = false; // 手が完全に消えたらロック解除
                 }
             });
 
