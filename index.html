@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>人体スキャン × アクションカウンター</title>
+    <title>色・位置記憶自動復帰 × アクションカウンター</title>
     <style>
         html, body {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -34,7 +34,7 @@
         }
 
         h1 { font-size: 1.1rem; margin: 0 0 5px 0; color: #fff; }
-        .sub-title { font-size: 0.8rem; color: #aaa; margin: 0 0 10px 0; }
+        .sub-title { font-size: 0.8rem; color: #00FF66; margin: 0 0 10px 0; font-weight: bold; }
         
         .counters-wrapper { display: flex; justify-content: center; gap: 15px; margin-top: 5px; }
         .counter-box {
@@ -63,8 +63,8 @@
     </div>
 
     <div class="ui-layer">
-        <h1>人物追従・アクションカウンター</h1>
-        <div class="sub-title">追いたい人をタップしてロックオンしてください</div>
+        <h1>自動復帰型・人物カウンター</h1>
+        <div class="sub-title">初回タップ以降、見失っても「同じエリア×同じ服の色」で自動再ロックします</div>
         <div class="counters-wrapper">
             <div class="counter-box">手を挙げる(A): <span id="count_numA" class="count-num">0</span></div>
             <div class="counter-box">しゃがむ(b): <span id="count_numB" class="count-num">0</span></div>
@@ -86,15 +86,19 @@
         let countA = 0;
         let countB = 0;
 
-        // アクション判定用の状態フラグ
         let wasHandDown = true;
         let wasStanding = true;
-        let defaultHipY = null; // まっすぐ立っているときのお尻の基準高さ
+        let defaultHipY = null; 
 
-        // 🎯 ロックオン管理用変数
+        // 🎯 ロックオン＆特徴記憶用変数
         let lastPeopleData = []; 
         let lockedPersonIndex = null; 
         let pose = null; 
+
+        // 🧠 記憶バンク
+        let isSeekingLostTarget = false; // 見失って捜索中かどうかのフラグ
+        let savedTargetColor = null;     // ロックオンした人の服（胸元）のHSL色データ
+        let savedLastPosition = { x: 0.5, y: 0.5 }; // 最後に確認された位置
 
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
@@ -109,17 +113,47 @@
                 });
         }
 
-        // 👆 画面タップ時のロックオン処理（人をタップ）
+        // 📸 特定の座標（お腹・胸元付近）のピクセルから簡易的にHSL色を取得する関数
+        function getBodyColor(landmarks) {
+            if (!video.videoWidth) return null;
+            
+            // 左肩(11)と右肩(12)の中間を胸元として色をサンプリング
+            const midX = Math.floor(((landmarks[11].x + landmarks[12].x) / 2) * canvasElement.width);
+            const midY = Math.floor(((landmarks[11].y + landmarks[12].y) / 2) * canvasElement.height);
+
+            try {
+                const pixel = canvasCtx.getImageData(midX, midY, 1, 1).data;
+                let r = pixel[0] / 255, g = pixel[1] / 255, b = pixel[2] / 255;
+                let max = Math.max(r, g, b), min = Math.min(r, g, b);
+                let h, s, l = (max + min) / 2;
+
+                if (max === min) { h = s = 0; } 
+                else {
+                    let d = max - min;
+                    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                    switch (max) {
+                        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                        case g: h = (b - r) / d + 2; break;
+                        case b: h = (r - g) / d + 4; break;
+                    }
+                    h /= 6;
+                }
+                return { h: h * 360, s: s * 100, l: l * 100 }; // HSL形式で返す（光沢変化に強いため）
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // 👆 画面タップ時のロックオン処理
         canvasElement.addEventListener('click', (event) => {
             const rect = canvasElement.getBoundingClientRect();
             const tapX = (event.clientX - rect.left) / rect.width;
             const tapY = (event.clientY - rect.top) / rect.height;
 
             let closestIndex = null;
-            let minDistance = 0.25; // 人は手より大きいので少し判定を広めに
+            let minDistance = 0.25; 
 
             lastPeopleData.forEach((landmarks, idx) => {
-                // 身体の中心に近い「お腹（11:左肩と12:右肩の中間など）」か「鼻（0）」を基準にする。ここでは鼻（0番）を使用
                 const nose = landmarks[0];
                 const distance = Math.sqrt(Math.pow(nose.x - tapX, 2) + Math.pow(nose.y - tapY, 2));
                 if (distance < minDistance) {
@@ -130,38 +164,33 @@
 
             if (closestIndex !== null) {
                 lockedPersonIndex = closestIndex;
-                statusText.innerText = `🎯 ターゲット（人）をロックオンしました！`;
-                // 状態リセット
-                wasHandDown = true;
-                wasStanding = true;
-                defaultHipY = null; 
+                isSeekingLostTarget = false;
                 
-                if (pose) {
-                    pose.setOptions({ maxNumPeople: 1 }); // ⚡【ラグ対策】1人に処理を絞る
-                }
+                // タップされた瞬間にその人の服の色と位置を記憶
+                savedTargetColor = getBodyColor(lastPeopleData[closestIndex]);
+                savedLastPosition = { x: lastPeopleData[closestIndex][0].x, y: lastPeopleData[closestIndex][0].y };
+
+                statusText.innerText = `🎯 ターゲットをロックし、特徴（色・位置）を記憶しました！`;
+                wasHandDown = true; wasStanding = true; defaultHipY = null; 
+                
+                if (pose) { pose.setOptions({ maxNumPeople: 1 }); }
             } else {
                 lockedPersonIndex = null;
+                isSeekingLostTarget = false;
+                savedTargetColor = null;
                 statusText.innerText = `🔓 ロックオンを解除しました（全員をスキャン中）`;
-                if (pose) {
-                    pose.setOptions({ maxNumPeople: 4 }); // 🔓 解除で4人モードに戻す
-                }
+                if (pose) { pose.setOptions({ maxNumPeople: 4 }); }
             }
         });
 
         function startPoseDetection() {
-            // MediaPipe Poseのセットアップ
             pose = new window.Pose({
                 locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/pose/" + file
             });
 
-            // 複数人（最大4人）スキャン設定
             pose.setOptions({
-                modelComplexity: 1,
-                smoothLandmarks: true,
-                enableSegmentation: false,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5,
-                maxNumPeople: 4 // 同時スキャン数
+                modelComplexity: 1, smoothLandmarks: true, enableSegmentation: false,
+                minDetectionConfidence: 0.5, minTrackingConfidence: 0.5, maxNumPeople: 4
             });
 
             pose.onResults((results) => {
@@ -169,91 +198,105 @@
                 canvasElement.height = video.videoHeight || window.innerHeight;
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-                // 単一・複数どちらのモードでも配列として扱えるように調整
                 let poses = [];
-                if (results.multiPoseLandmarks) {
-                    poses = results.multiPoseLandmarks;
-                } else if (results.poseLandmarks) {
-                    poses = [results.poseLandmarks];
-                }
+                if (results.multiPoseLandmarks) { poses = results.multiPoseLandmarks; } 
+                else if (results.poseLandmarks) { poses = [results.poseLandmarks]; }
 
+                // 描画用に今のカメラ映像における色を拾うため、描画直前に一時保存
                 lastPeopleData = poses;
 
+                // 🔍 【コアシステム】見失い捜索モード中の自動マッチング処理
+                if (isSeekingLostTarget && poses.length > 0 && savedTargetColor) {
+                    let bestMatchIndex = null;
+                    let bestScore = 999;
+
+                    poses.forEach((landmarks, idx) => {
+                        const currentColor = getBodyColor(landmarks);
+                        if (!currentColor) return;
+
+                        // 1. 色相(H)の差分を計算（0〜180度）
+                        let hDiff = Math.abs(savedTargetColor.h - currentColor.h);
+                        if (hDiff > 180) hDiff = 360 - hDiff;
+
+                        // 2. 最後に消えた座標との距離を計算
+                        const dist = Math.sqrt(Math.pow(landmarks[0].x - savedLastPosition.x, 2) + Math.pow(landmarks[0].y - savedLastPosition.y, 2));
+
+                        // 総合スコア（色相のズレ + 距離ペナルティ。数値が低いほど同一人物の可能性大）
+                        const totalScore = hDiff + (dist * 150);
+
+                        // 色のズレが35度以内、かつ移動距離が極端に離れていなければ
+                        if (hDiff < 35 && totalScore < bestScore) {
+                            bestScore = totalScore;
+                            bestMatchIndex = idx;
+                        }
+                    });
+
+                    // 同一人物だと判定できたら、自動でロックオンを復活！
+                    if (bestMatchIndex !== null) {
+                        lockedPersonIndex = bestMatchIndex;
+                        isSeekingLostTarget = false;
+                        statusText.innerText = "🔄 ターゲットが戻ってきたため、自動で再ロックオンしました！";
+                        if (pose) { pose.setOptions({ maxNumPeople: 1 }); }
+                    }
+                }
+
                 if (poses.length > 0) {
-                    let activeIndex = 0; 
+                    let activeIndex = 0;
                     
                     if (lockedPersonIndex !== null && poses[activeIndex]) {
-                        activeIndex = 0; // 1人モードの時は常に0番目
-                    } else if (lockedPersonIndex !== null) {
+                        activeIndex = 0; 
+                        // ロック中、次のフレームのために常に最新の位置を記憶し続ける
+                        savedLastPosition = { x: poses[activeIndex][0].x, y: poses[activeIndex][0].y };
+                    } 
+                    else if (lockedPersonIndex !== null) {
+                        // 👁️‍🗨️ 画面内からターゲットが消えた瞬間
                         lockedPersonIndex = null;
-                        pose.setOptions({ maxNumPeople: 4 });
-                        statusText.innerText = "⚠️ ターゲットを見失いました。再度タップしてください。";
+                        isSeekingLostTarget = true; // 捜索モードへ移行
+                        statusText.innerText = "🔍 ターゲットが見失われました。同じ服の人の再入場を待っています...";
+                        if (pose) { pose.setOptions({ maxNumPeople: 4 }); } // 周りを探すため4人スキャンに戻す
                     }
 
-                    // 🎨 骨格描画（ロックオン以外は表示を消す仕様を継承）
+                    // 🎨 骨格描画
                     poses.forEach((landmarks, idx) => {
-                        const isTarget = (idx === activeIndex);
-                        
+                        const isTarget = (idx === activeIndex && !isSeekingLostTarget);
                         if (lockedPersonIndex === null) {
-                            // 未ロック時は全員を白線で描画
                             window.drawConnectors(canvasCtx, landmarks, window.POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
                             window.drawLandmarks(canvasCtx, landmarks, {color: '#888888', radius: 2});
                         } else if (isTarget) {
-                            // ロックオン完了後はターゲットだけ緑線で描画
                             window.drawConnectors(canvasCtx, landmarks, window.POSE_CONNECTIONS, {color: '#00FF66', lineWidth: 4});
                             window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', radius: 4});
                         }
                     });
 
-                    // 🧠 ロックオンされた「1人」の動きを解析・カウント
-                    if (poses[activeIndex]) {
+                    // 🧠 アクション判定処理
+                    if (lockedPersonIndex !== null && poses[activeIndex]) {
                         const landmarks = poses[activeIndex];
-
-                        // 各パーツの座標を取得 (y座標は下がプラス、上がマイナス)
                         const noseY = landmarks[0].y;
                         const leftWristY = landmarks[15].y;
                         const rightWristY = landmarks[16].y;
-                        const leftHipY = landmarks[23].y;
-                        const rightHipY = landmarks[24].y;
-                        
-                        const currentHipY = (leftHipY + rightHipY) / 2; // お尻（腰）の平均高さ
+                        const currentHipY = (landmarks[23].y + landmarks[24].y) / 2;
 
-                        // 初回の腰の高さを「立っている基準」として記憶
-                        if (defaultHipY === null) {
-                            defaultHipY = currentHipY;
-                        }
+                        if (defaultHipY === null) { defaultHipY = currentHipY; }
 
-                        // 🙋‍♂️ 判定A：手が目（鼻）より上に上がったか
                         const isHandUp = (leftWristY < noseY) || (rightWristY < noseY);
-
-                        // 🧘‍♂️ 判定b：しゃがんだか（基準位置より15%以上お尻が下がったら）
                         const isSquatting = (currentHipY > defaultHipY + 0.15);
 
-                        // --- カウントA：手を挙げる動作の処理 ---
                         if (isHandUp && wasHandDown) {
-                            countA++;
-                            countNumA.innerText = countA;
-                            wasHandDown = false;
-                            statusText.innerText = `🙋‍♂️ 手が上がりました！カウントA: ${countA}`;
-                        } else if (!isHandUp) {
-                            wasHandDown = true;
-                        }
+                            countA++; countNumA.innerText = countA; wasHandDown = false;
+                            statusText.innerText = `🙋‍♂️ カウントA: ${countA}`;
+                        } else if (!isHandUp) { wasHandDown = true; }
 
-                        // --- カウントb：しゃがむ動作の処理 ---
                         if (isSquatting && wasStanding) {
-                            countB++;
-                            countNumB.innerText = countB;
-                            wasStanding = false;
-                            statusText.innerText = `🧘しゃがみました！カウントb: ${countB}`;
-                        } else if (!isSquatting && (currentHipY < defaultHipY + 0.05)) {
-                            // しっかり立ち上がったらフラグを戻す
-                            wasStanding = true;
-                        }
+                            countB++; countNumB.innerText = countB; wasStanding = false;
+                            statusText.innerText = `🧘 カウントb: ${countB}`;
+                        } else if (!isSquatting && (currentHipY < defaultHipY + 0.05)) { wasStanding = true; }
                     }
                 } else {
+                    // 画面に誰も映っていない時、もし元々ロックオンしていたなら捜索モードのまま待機
                     if (lockedPersonIndex !== null) {
-                        lockedPersonIndex = null; 
-                        pose.setOptions({ maxNumPeople: 4 });
+                        lockedPersonIndex = null;
+                        isSeekingLostTarget = true;
+                        if (pose) { pose.setOptions({ maxNumPeople: 4 }); }
                     }
                 }
             });
