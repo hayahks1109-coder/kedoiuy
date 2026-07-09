@@ -1,51 +1,92 @@
+```html
 <!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>ラグ解消版・パー開始型自動カウンター</title>
+    <title>4手スキャン・自動カウンター</title>
     <style>
+        /* 画面全体の余白をゼロにし、スクロールさせない設定 */
         html, body {
-            margin: 0; padding: 0; width: 100%; height: 100%;
-            overflow: hidden; background-color: #000; font-family: sans-serif;
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+            font-family: sans-serif;
         }
 
+        /* 📷 カメラと全体を重ねるコンテナ（画面いっぱいに広げる） */
         .camera-container {
-            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
             overflow: hidden;
         }
         
-        #webcam { width: 100%; height: 100%; object-fit: cover; }
-        #output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        /* ビデオを隙間なく全画面表示（はみ出た部分は自動カット） */
+        #webcam {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
 
-        /* 3等分グリッド線 */
-        .grid-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        /* 描画用キャンバスも全画面に重ねる */
+        #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* グリッド線のデザイン（3等分の網の目） */
+        .grid-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+        }
         .grid-line-v1 { position: absolute; top: 0; left: 33.3%; width: 1px; height: 100%; background: rgba(255,255,255,0.4); }
         .grid-line-v2 { position: absolute; top: 0; left: 66.6%; width: 1px; height: 100%; background: rgba(255,255,255,0.4); }
         .grid-line-h1 { position: absolute; top: 33.3%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.4); }
         .grid-line-h2 { position: absolute; top: 66.6%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.4); }
 
-        /* 📱 UIレイヤー */
+        /* 📱 画面上部に被せる文字情報エリア */
         .ui-layer {
-            position: absolute; top: 0; left: 0; width: 100%; padding: 20px;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 20px;
             box-sizing: border-box;
             background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%);
-            pointer-events: none; text-align: center;
+            pointer-events: none; /* カメラ操作等の邪魔をしない */
+            text-align: center;
         }
 
         h1 { font-size: 1.1rem; margin: 0 0 5px 0; color: #fff; }
-        .sub-title { font-size: 0.8rem; color: #00FF66; margin: 0 0 10px 0; font-weight: bold; }
         
-        .counters-wrapper { display: flex; justify-content: center; gap: 15px; margin-top: 5px; }
-        .counter-box {
-            background: rgba(0, 0, 0, 0.6); padding: 8px 15px; border-radius: 20px;
-            font-size: 1.1rem; font-weight: bold; color: #fff; min-width: 120px;
+        /* 🔢 カウント表示（全画面で見えやすいよう、少し半透明の黒背景の上に表示） */
+        .counter-container {
+            display: inline-block;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 20px;
+            border-radius: 30px;
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: #fff;
+            margin-top: 5px;
         }
-        .count-num { font-size: 2rem; margin-left: 8px; vertical-align: middle; }
-        #count_num1 { color: #00FF66; }
-        #count_num2 { color: #FFCC00; }
+        #count_num {
+            font-size: 2.2rem;
+            color: #00FF66;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
 
-        #status { font-weight: bold; color: #ddd; margin: 12px 0 0 0; font-size: 0.9rem; }
+        #status { font-weight: bold; color: #ddd; margin: 8px 0 0 0; font-size: 0.9rem; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
@@ -63,11 +104,9 @@
     </div>
 
     <div class="ui-layer">
-        <h1>パー開始型・超軽量自動カウンター</h1>
-        <div class="sub-title">🖐（パー）を検出するとスキャン数を1つに絞って高速化します</div>
-        <div class="counters-wrapper">
-            <div class="counter-box">✊➔🖐: <span id="count_num1" class="count-num">0</span></div>
-            <div class="counter-box">✌➔🖐: <span id="count_num2" class="count-num">0</span></div>
+        <h1>グー➔パーで自動カウント (4手スキャン)</h1>
+        <div class="counter-container">
+            カウント:<span id="count_num">0</span>
         </div>
         <p id="status">ｼｽﾃﾑ起動中...</p>
     </div>
@@ -78,26 +117,18 @@
     <script>
         const video = document.getElementById('webcam');
         const statusText = document.getElementById('status');
-        const countNum1 = document.getElementById('count_num1');
-        const countNum2 = document.getElementById('count_num2');
-        const canvasElement = document.getElementById('output_canvas');
-        const canvasCtx = canvasElement.getContext('2d');
+        const countNum = document.getElementById('count_num');
 
-        let count1 = 0;
-        let count2 = 0;
-        
+        let currentCount = 0;
         let wasRock = false;
-        let wasScissors = false;
-        
-        let isTrackingStarted = false;
-        let hands = null; // AIインスタンスをグローバルに保持
+        let isTrackingStarted = false; // 追跡開始フラグ
 
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
             navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
                 .then((stream) => {
                     video.srcObject = stream;
-                    statusText.innerText = "✅ 準備完了。まずはカメラに🖐（パー）を映してください。";
+                    statusText.innerText = "✅ 準備完了！🖐（パー）を映すとロックオンを開始します。";
                     startLightweightDetection();
                 })
                 .catch((err) => {
@@ -106,28 +137,33 @@
         }
 
         function startLightweightDetection() {
-            hands = new window.Hands({
+            const canvasElement = document.getElementById('output_canvas');
+            const canvasCtx = canvasElement.getContext('2d');
+
+            const hands = new window.Hands({
                 locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file
             });
 
-            // 🔓 初期状態は「最大4手」でパーを広く待ち受ける
+            // 4手同時スキャン設定
             hands.setOptions({
                 maxNumHands: 4, 
-                modelComplexity: 1,
+                modelComplexity: 1, // 高精度モードを維持
                 minDetectionConfidence: 0.7,
                 minTrackingConfidence: 0.7
             });
 
             hands.onResults((results) => {
+                // 【重要】キャンバスのサイズを設定（画面全体の大きさに合わせる）
                 canvasElement.width = video.videoWidth || window.innerWidth;
                 canvasElement.height = video.videoHeight || window.innerHeight;
+
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
                 if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                     
                     let targetLandmarks = null;
 
-                    // 🔍 映っている手の中からターゲット（パー、または追跡中の手）を決定
+                    // 🔍 映っている最大4つの手の中から条件に合う手を探す
                     for (const landmarks of results.multiHandLandmarks) {
                         const isIndexUp = landmarks[8].y < landmarks[5].y;
                         const isMiddleUp = landmarks[12].y < landmarks[9].y;
@@ -136,16 +172,18 @@
                         
                         const isPaper = isIndexUp && isMiddleUp && isRingUp && isPinkyUp;
 
+                        // すでに追跡中（ロックオン状態）であるか、新しく「🖐（パー）」を出した手をターゲットに決定
                         if (isTrackingStarted || isPaper) {
                             targetLandmarks = landmarks;
                             break; 
                         }
                     }
 
+                    // 🎯 決定したターゲットの手だけを処理
                     if (targetLandmarks) {
                         const landmarks = targetLandmarks;
 
-                        // 骨格を描画
+                        // 骨格を描画（ロックオン中の手は緑、他は白）
                         window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#00FF66', lineWidth: 4});
                         window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
 
@@ -156,59 +194,34 @@
 
                         const isRock = !isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp;
                         const isPaper = isIndexUp && isMiddleUp && isRingUp && isPinkyUp;
-                        const isScissors = isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp;
 
-                        // 💡 【超重要：ラグ対策】
-                        // ロックオンが成功した瞬間、AIのスキャン上限を「1手」に変更してスマホの計算負荷を消す
-                        if (!isTrackingStarted) {
-                            isTrackingStarted = true;
-                            hands.setOptions({ maxNumHands: 1 }); 
-                        }
+                        // 追跡フラグをON
+                        isTrackingStarted = true;
 
                         if (isRock) {
                             wasRock = true;
-                            wasScissors = false;
-                            statusText.innerText = "✊ グーに変化しました（パーで左＋1）";
+                            statusText.innerText = "✊ グーに変化しました（パーでカウント＋1）";
                         } 
-                        else if (isScissors) {
-                            wasScissors = true;
+                        else if (isPaper && wasRock) {
                             wasRock = false;
-                            statusText.innerText = "✌ チョキに変化しました（パーで右＋1）";
-                        } 
-                        else if (isPaper) {
-                            if (wasRock) {
-                                wasRock = false;
-                                count1++;
-                                countNum1.innerText = count1;
-                                statusText.innerText = `🖐 パーに戻りました！ カウント1: ${count1}`;
-                            } 
-                            else if (wasScissors) {
-                                wasScissors = false;
-                                count2++;
-                                countNum2.innerText = count2;
-                                statusText.innerText = `🖐 パーに戻りました！ カウント2: ${count2}`;
-                            } else {
-                                statusText.innerText = "🖐 パーを認識中... ✊か✌に形を変えてください";
-                            }
-                        }
-                        else if (!isPaper && !isRock && !isScissors) {
+                            currentCount++;
+                            countNum.innerText = currentCount;
+                            statusText.innerText = `🖐 パーに戻りました！ カウント: ${currentCount}`;
+                        } else if (!isPaper && !isRock) {
                             wasRock = false;
-                            wasScissors = false;
                         }
                     } else {
                         statusText.innerText = "🖐（パー）をカメラに映すとロックオンを開始します";
+                        // 他の手の骨格を描画（白）
+                        for (const landmarks of results.multiHandLandmarks) {
+                            window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 4});
+                            window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
+                        }
                     }
                 } else {
                     statusText.innerText = "手が映っていません";
                     wasRock = false;
-                    wasScissors = false;
-                    
-                    // 💡 【超重要：ラグ対策】
-                    // 手が画面から完全に消えたら、次のスキャンを待つために上限を「4手」に解放する
-                    if (isTrackingStarted) {
-                        isTrackingStarted = false;
-                        hands.setOptions({ maxNumHands: 4 }); 
-                    }
+                    isTrackingStarted = false; // 手が完全に画面から消えたらロック解除
                 }
             });
 
@@ -225,3 +238,5 @@
     </script>
 </body>
 </html>
+
+```
