@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>パー開始型・4手スキャン自動カウンター</title>
+    <title>ラグ解消版・パー開始型自動カウンター</title>
     <style>
         html, body {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -63,8 +63,8 @@
     </div>
 
     <div class="ui-layer">
-        <h1>パー開始型・自動カウンター</h1>
-        <div class="sub-title">🖐（パー）を作った手だけを自動でロックオン（最大4つスキャン）します</div>
+        <h1>パー開始型・超軽量自動カウンター</h1>
+        <div class="sub-title">🖐（パー）を検出するとスキャン数を1つに絞って高速化します</div>
         <div class="counters-wrapper">
             <div class="counter-box">✊➔🖐: <span id="count_num1" class="count-num">0</span></div>
             <div class="counter-box">✌➔🖐: <span id="count_num2" class="count-num">0</span></div>
@@ -89,8 +89,8 @@
         let wasRock = false;
         let wasScissors = false;
         
-        // 🔒 ロックオンしている手があるかどうかを管理するフラグ
         let isTrackingStarted = false;
+        let hands = null; // AIインスタンスをグローバルに保持
 
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
@@ -106,14 +106,14 @@
         }
 
         function startLightweightDetection() {
-            const hands = new window.Hands({
+            hands = new window.Hands({
                 locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file
             });
 
-            // 🖐 消さずに維持した高精度・4手同時スキャン設定
+            // 🔓 初期状態は「最大4手」でパーを広く待ち受ける
             hands.setOptions({
                 maxNumHands: 4, 
-                modelComplexity: 1, // 高精度モードを維持
+                modelComplexity: 1,
                 minDetectionConfidence: 0.7,
                 minTrackingConfidence: 0.7
             });
@@ -127,7 +127,7 @@
                     
                     let targetLandmarks = null;
 
-                    // 🔍 映っている最大4つの手の中から条件に合う手を探す
+                    // 🔍 映っている手の中からターゲット（パー、または追跡中の手）を決定
                     for (const landmarks of results.multiHandLandmarks) {
                         const isIndexUp = landmarks[8].y < landmarks[5].y;
                         const isMiddleUp = landmarks[12].y < landmarks[9].y;
@@ -136,18 +136,16 @@
                         
                         const isPaper = isIndexUp && isMiddleUp && isRingUp && isPinkyUp;
 
-                        // すでに追跡中（ロックオン状態）であるか、新しく「🖐（パー）」を出した手をターゲットに決定
                         if (isTrackingStarted || isPaper) {
                             targetLandmarks = landmarks;
                             break; 
                         }
                     }
 
-                    // 🎯 決定したターゲットの手だけを処理
                     if (targetLandmarks) {
                         const landmarks = targetLandmarks;
 
-                        // 骨格を描画（ロックオン中の手は緑、他は白）
+                        // 骨格を描画
                         window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#00FF66', lineWidth: 4});
                         window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
 
@@ -160,8 +158,12 @@
                         const isPaper = isIndexUp && isMiddleUp && isRingUp && isPinkyUp;
                         const isScissors = isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp;
 
-                        // 追跡フラグをON
-                        isTrackingStarted = true;
+                        // 💡 【超重要：ラグ対策】
+                        // ロックオンが成功した瞬間、AIのスキャン上限を「1手」に変更してスマホの計算負荷を消す
+                        if (!isTrackingStarted) {
+                            isTrackingStarted = true;
+                            hands.setOptions({ maxNumHands: 1 }); 
+                        }
 
                         if (isRock) {
                             wasRock = true;
@@ -200,7 +202,13 @@
                     statusText.innerText = "手が映っていません";
                     wasRock = false;
                     wasScissors = false;
-                    isTrackingStarted = false; // 手が完全に画面から消えたらロック解除
+                    
+                    // 💡 【超重要：ラグ対策】
+                    // 手が画面から完全に消えたら、次のスキャンを待つために上限を「4手」に解放する
+                    if (isTrackingStarted) {
+                        isTrackingStarted = false;
+                        hands.setOptions({ maxNumHands: 4 }); 
+                    }
                 }
             });
 
