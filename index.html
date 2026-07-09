@@ -64,7 +64,7 @@
 
     <div class="ui-layer">
         <h1>ターゲット選択式・自動カウンター</h1>
-        <div class="sub-title">画面内の手をタップするとロックオン（他は追従オフ）します</div>
+        <div class="sub-title">画面内の手をタップするとロックオン（内部処理を1手に制限）します</div>
         <div class="counters-wrapper">
             <div class="counter-box">✊➔🖐: <span id="count_num1" class="count-num">0</span></div>
             <div class="counter-box">✌➔🖐: <span id="count_num2" class="count-num">0</span></div>
@@ -91,6 +91,7 @@
         // 🎯 ロックオン管理用変数
         let lastHandsData = []; 
         let lockedHandIndex = null; 
+        let hands = null; // AIインスタンスをここに保持
 
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
@@ -128,14 +129,25 @@
                 statusText.innerText = `🎯 ターゲットをロックオンしました！`;
                 wasRock = false;
                 wasScissors = false;
+                
+                // ⚡【ラグ対策】タップされた瞬間、AIに「今後は1つだけ探せ」と命令を変更する
+                if (hands) {
+                    hands.setOptions({ maxNumHands: 1 });
+                }
             } else {
                 lockedHandIndex = null;
                 statusText.innerText = `🔓 ロックオンを解除しました（すべての手をスキャン中）`;
+                
+                // 🔓 解除されたら、また「最大4手を探すモード」に戻す
+                if (hands) {
+                    hands.setOptions({ maxNumHands: 4 });
+                }
             }
         });
 
         function startLightweightDetection() {
-            const hands = new window.Hands({
+            // ローカル変数ではなく、グローバルに定義したhandsに代入
+            hands = new window.Hands({
                 locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file
             });
 
@@ -154,25 +166,26 @@
                 lastHandsData = results.multiHandLandmarks || [];
 
                 if (results.multiHandLandmarks) {
-                    let activeIndex = 0; 
+                    // AI側の認識数が1個に絞られている場合は、常に0番目の手がターゲットになる
+                    let activeIndex = (lockedHandIndex !== null) ? 0 : 0; 
                     
-                    if (lockedHandIndex !== null && results.multiHandLandmarks[lockedHandIndex]) {
-                        activeIndex = lockedHandIndex;
-                    } else if (lockedHandIndex !== null) {
+                    if (lockedHandIndex !== null && !results.multiHandLandmarks[activeIndex]) {
+                        // ロックオン中の手が画面から消え去ったら4手モードに戻す
                         lockedHandIndex = null;
+                        hands.setOptions({ maxNumHands: 4 });
                         statusText.innerText = "⚠️ ターゲットを見失いました。再度タップしてください。";
                     }
 
-                    // 🎨 【ここを修正】すべての手のループ処理
+                    // 🎨 すべての手のループ処理
                     results.multiHandLandmarks.forEach((landmarks, idx) => {
                         const isTarget = (idx === activeIndex);
                         
-                        // 🔓 ロックオンしていない時は、映っている全ての手を白線で追従する
+                        // ロックオンしていない時は、映っている全ての手を白線で追従する
                         if (lockedHandIndex === null) {
                             window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
                             window.drawLandmarks(canvasCtx, landmarks, {color: '#888888', lineWidth: 1, radius: 2});
                         } 
-                        // 🎯 ロックオンが完了した後は、「選ばれた手（緑）」だけを描画し、それ以外の手は完全無視（描画スキップ）
+                        // ロックオン完了後は、「選ばれた手（緑）」だけを描画（この時、AIは1手しか検出していません）
                         else if (isTarget) {
                             window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, {color: '#00FF66', lineWidth: 4});
                             window.drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 4});
@@ -192,7 +205,6 @@
                         const isPaper = isIndexUp && isMiddleUp && isRingUp && isPinkyUp;
                         const isScissors = isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp;
 
-                        // ロックオンされている、または未ロック時のデフォルト追従時のみカウントを進める
                         if (isRock) {
                             wasRock = true;
                             wasScissors = false;
@@ -225,6 +237,7 @@
                 } else {
                     if (lockedHandIndex !== null) {
                         lockedHandIndex = null; 
+                        hands.setOptions({ maxNumHands: 4 }); // 手が完全に消えたら4手モードに復帰
                     }
                 }
             });
