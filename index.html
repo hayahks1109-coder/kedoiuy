@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>色・方向ダブル記憶 × アクションカウンター</title>
+    <title>完全特定ターゲット・アクションカウンター</title>
     <style>
         html, body {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -51,7 +51,7 @@
 
     <div class="ui-layer">
         <h1>特定人物追従カウンター</h1>
-        <div class="sub-title">タップでロック。見失っても「消えた方向」と「服の色」が一致すれば自動復帰します</div>
+        <div class="sub-title">画面をタップしてロック。別人は描画すら行わず、本人のみ検知します</div>
         <div class="counters-wrapper">
             <div class="counter-box">手を挙げる(A): <span id="count_numA" class="count-num">0</span></div>
             <div class="counter-box">しゃがむ(b): <span id="count_numB" class="count-num">0</span></div>
@@ -108,7 +108,6 @@
             const midY = Math.floor(((landmarks[11].y + landmarks[12].y) / 2) * canvasElement.height);
 
             try {
-                // 指定座標の1ピクセルデータを取得
                 const pixel = canvasCtx.getImageData(midX, midY, 1, 1).data;
                 let r = pixel[0] / 255, g = pixel[1] / 255, b = pixel[2] / 255;
                 let max = Math.max(r, g, b), min = Math.min(r, g, b);
@@ -125,23 +124,22 @@
                     }
                     h /= 6;
                 }
-                return { h: h * 360, s: s * 100, l: l * 100 }; // 色相(H)、彩度(S)、明度(L)
+                return { h: h * 360, s: s * 100, l: l * 100 };
             } catch (e) {
                 return null;
             }
         }
 
         // 👆 画面タップ時のロックオン処理
-        canvasElement.addEventListener('click', (event) => {
+        canvasElement.addEventListener('click', () => {
             if (latestLandmarks) {
                 isLocked = true;
                 isTargetVisible = true;
                 
-                // 🎯 タップした瞬間の「服の色」と「位置」を記憶に焼き付ける
                 savedColor = getBodyColor(latestLandmarks);
                 lastKnownNosePosition = { x: latestLandmarks[0].x, y: latestLandmarks[0].y };
                 
-                statusText.innerText = "🎯 ターゲットの「服の色」と「位置」を記憶してロックしました！";
+                statusText.innerText = "🎯 ターゲットを確定し、ロックオンしました！";
                 
                 wasHandDown = true;
                 wasStanding = true;
@@ -180,43 +178,39 @@
                         const currentColor = getBodyColor(latestLandmarks);
 
                         if (!isTargetVisible) {
-                            // 🔍 【ダブル復帰判定】ターゲットがカメラに戻ってきたかをチェック
+                            // 🔍 【復帰判定】ターゲットがカメラに戻ってきたかをチェック
                             if (currentColor && savedColor) {
-                                // 1. 最後に消えた座標との距離を計算
+                                // 1. 最後に消えた座標との距離
                                 const dist = Math.sqrt(Math.pow(nose.x - lastKnownNosePosition.x, 2) + Math.pow(nose.y - lastKnownNosePosition.y, 2));
                                 
-                                // 2. 服の色相(H)の差分を計算
+                                // 2. 服の色相(H)の差分
                                 let hDiff = Math.abs(savedColor.h - currentColor.h);
                                 if (hDiff > 180) hDiff = 360 - hDiff;
 
-                                // 💡 条件：最後に消えた端から近く(35%以内)、かつ服の色相ズレが35度以内なら「本人」とみなす
+                                // 条件：最後に消えた端の近く(35%以内)、かつ服の色(35度以内)
                                 if (dist < 0.35 && hDiff < 35) {
                                     isTargetVisible = true;
-                                    statusText.innerText = "🔄 服の色と位置が一致！自動ロックオンを復帰しました！";
+                                    statusText.innerText = "🔄 ターゲットが戻りました！自動追従を再開します。";
+                                } else {
+                                    // ❌ 本人ではない（別人が映った）ので、ここで追従処理を弾く
+                                    isTargetVisible = false;
                                 }
                             }
                         }
 
                         if (isTargetVisible) {
-                            // 追従中は、現在の位置を常に「最後に確認された位置」として更新し続ける
+                            // 追従中のみ位置を更新
                             lastKnownNosePosition = { x: nose.x, y: nose.y };
                         }
                     }
 
-                    // 🎨 骨格の描画
+                    // 🎨 【描画ガード】ターゲット本人（またはロック前の通常時）のみ描画を実行する
                     if (!isLocked || isTargetVisible) {
                         const lineColor = isLocked ? '#00FF66' : '#FFFFFF';
                         window.drawConnectors(canvasCtx, latestLandmarks, window.POSE_CONNECTIONS, {color: lineColor, lineWidth: 3});
                         window.drawLandmarks(canvasCtx, latestLandmarks, {color: '#FF0000', radius: 4});
-                    } else {
-                        // ターゲットではない別人はグレー描画にして、カウントを完全に無視する
-                        window.drawConnectors(canvasCtx, latestLandmarks, window.POSE_CONNECTIONS, {color: '#444444', lineWidth: 1});
-                        window.drawLandmarks(canvasCtx, latestLandmarks, {color: '#666666', radius: 1});
-                        statusText.innerText = "🔍 ターゲットの戻りを待っています...（別人を無視中）";
-                    }
 
-                    // 🙋‍♂️ アクション＆カウント判定（ロックされたターゲットのみが対象）
-                    if (!isLocked || isTargetVisible) {
+                        // 🙋‍♂️ アクション＆カウント判定
                         const noseY = latestLandmarks[0].y;
                         const leftWristY = latestLandmarks[15].y;
                         const rightWristY = latestLandmarks[16].y;
@@ -236,6 +230,9 @@
                             countB++; countNumB.innerText = countB; wasStanding = false;
                             statusText.innerText = `🧘 カウントb: ${countB}`;
                         } else if (!isSquatting && (currentHipY < defaultHipY + 0.05)) { wasStanding = true; }
+                    } else {
+                        // 👁️‍🗨️ ターゲット本人でない別人の場合は、キャンバスへの骨格描画もカウント判定も一切行わない（完全シカト）
+                        statusText.innerText = "🔍 ターゲットの戻りを待っています...（別人を完全に無視中）";
                     }
 
                 } else {
@@ -244,7 +241,7 @@
                     if (isLocked && isTargetVisible) {
                         isTargetVisible = false; // ターゲット捜索モードへ
 
-                        // 最後に消えた座標から方向テキストを作成
+                        // 消えた座標から方向を特定
                         let direction = "";
                         if (lastKnownNosePosition.x < 0.35) direction = "左端";
                         else if (lastKnownNosePosition.x > 0.65) direction = "右端";
@@ -252,7 +249,7 @@
                         else if (lastKnownNosePosition.y > 0.65) direction = "下端";
                         else direction = "中央付近";
 
-                        statusText.innerText = `🔍 ターゲットが【${direction}】から消えました。同じ服の色の再入場を待っています...`;
+                        statusText.innerText = `🔍 ターゲットが【${direction}】から消えました。本人の再入場を待っています...`;
                     }
                 }
             });
