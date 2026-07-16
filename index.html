@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>完全特定ターゲット・アクションカウンター</title>
+    <title>軽量・特定人物追従カウンターyeah!!!thecera</title>
     <style>
         html, body {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -50,8 +50,8 @@
     </div>
 
     <div class="ui-layer">
-        <h1>特定人物追従カウンター</h1>
-        <div class="sub-title">画面をタップしてロック。別人は描画すら行わず、本人のみ検知します</div>
+        <h1>特定人物追従カウンター（超軽量版）</h1>
+        <div class="sub-title">1秒ごとの色判定＆見失い時の省電力モードでラグを徹底カット</div>
         <div class="counters-wrapper">
             <div class="counter-box">手を挙げる(A): <span id="count_numA" class="count-num">0</span></div>
             <div class="counter-box">しゃがむ(b): <span id="count_numB" class="count-num">0</span></div>
@@ -79,15 +79,19 @@
 
         // 🎯 ロックオン＆特徴データ管理
         let latestLandmarks = null;
-        let isLocked = false;               // ロックオンが有効かどうか
-        let isTargetVisible = false;        // ロックしたターゲットが現在見えているか
+        let isLocked = false;               
+        let isTargetVisible = false;        
         
-        // 🧠 ターゲットの特徴記憶バンク
-        let savedColor = null;              // ターゲットの服の色（HSL）
-        let lastKnownNosePosition = { x: 0.5, y: 0.5 }; // 見失った最後の座標（鼻の位置）
+        let savedColor = null;              // HSL色
+        let lastKnownNosePosition = { x: 0.5, y: 0.5 }; 
+
+        // ⏱️ 軽量化タイマー・間引きフラグ
+        let lastColorCheckTime = 0;         // 最後に色を計算した時間（ミリ秒）
+        let frameSkipCounter = 0;           // 見失い時のフレーム間引き用
 
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
+            // 映像としてもきれいに使いたいとのことで、高画質な標準設定（640x480）のままにします
             navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: 640, height: 480 } })
                 .then((stream) => {
                     video.srcObject = stream;
@@ -99,11 +103,10 @@
                 });
         }
 
-        // 📸 服の色（胸元付近）のピクセルからHSL色を取得する関数
+        // 📸 【軽量化②】服の色の取得処理（必要なときだけ計算するように外に分離）
         function getBodyColor(landmarks) {
             if (!video.videoWidth || !landmarks) return null;
             
-            // 左肩(11)と右肩(12)の中間（胸元）の座標を計算
             const midX = Math.floor(((landmarks[11].x + landmarks[12].x) / 2) * canvasElement.width);
             const midY = Math.floor(((landmarks[11].y + landmarks[12].y) / 2) * canvasElement.height);
 
@@ -130,14 +133,16 @@
             }
         }
 
-        // 👆 画面タップ時のロックオン処理
+        // 👆 タップでロックオン開始
         canvasElement.addEventListener('click', () => {
             if (latestLandmarks) {
                 isLocked = true;
                 isTargetVisible = true;
                 
+                // タップした瞬間に最初の色と位置を強制記録
                 savedColor = getBodyColor(latestLandmarks);
                 lastKnownNosePosition = { x: latestLandmarks[0].x, y: latestLandmarks[0].y };
+                lastColorCheckTime = Date.now(); // タイマーリセット
                 
                 statusText.innerText = "🎯 ターゲットを確定し、ロックオンしました！";
                 
@@ -157,6 +162,7 @@
                 locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/pose/" + file
             });
 
+            // 精度を維持するため、モデルは標準「1」のままとします
             pose.setOptions({
                 modelComplexity: 1,
                 smoothLandmarks: true,
@@ -175,40 +181,46 @@
                     const nose = latestLandmarks[0];
 
                     if (isLocked) {
-                        const currentColor = getBodyColor(latestLandmarks);
+                        const now = Date.now();
+                        let currentColor = null;
+
+                        // ⏱️ 【軽量化②】1秒（1000ms）経っているときだけ、服の色を取得・更新する
+                        if (now - lastColorCheckTime > 1000) {
+                            currentColor = getBodyColor(latestLandmarks);
+                            lastColorCheckTime = now;
+                        }
 
                         if (!isTargetVisible) {
-                            // 🔍 【復帰判定】ターゲットがカメラに戻ってきたかをチェック
-                            if (currentColor && savedColor) {
-                                // 1. 最後に消えた座標との距離
+                            // 🔍 【復帰判定】
+                            // 1秒に1回のタイミングで取得できた色、または最後に持っていた色がターゲットに近いか判定
+                            const checkColor = currentColor || getBodyColor(latestLandmarks);
+                            
+                            if (checkColor && savedColor) {
                                 const dist = Math.sqrt(Math.pow(nose.x - lastKnownNosePosition.x, 2) + Math.pow(nose.y - lastKnownNosePosition.y, 2));
                                 
-                                // 2. 服の色相(H)の差分
-                                let hDiff = Math.abs(savedColor.h - currentColor.h);
+                                let hDiff = Math.abs(savedColor.h - checkColor.h);
                                 if (hDiff > 180) hDiff = 360 - hDiff;
 
-                                // 条件：最後に消えた端の近く(35%以内)、かつ服の色(35度以内)
+                                // 最後に消えた端の近く(35%以内)、かつ服の色(35度以内)
                                 if (dist < 0.35 && hDiff < 35) {
                                     isTargetVisible = true;
                                     statusText.innerText = "🔄 ターゲットが戻りました！自動追従を再開します。";
                                 } else {
-                                    // ❌ 本人ではない（別人が映った）ので、ここで追従処理を弾く
                                     isTargetVisible = false;
                                 }
                             }
                         }
 
                         if (isTargetVisible) {
-                            // 追従中のみ位置を更新
                             lastKnownNosePosition = { x: nose.x, y: nose.y };
                         }
                     }
 
-                    // 🎨 【描画ガード】ターゲット本人（またはロック前の通常時）のみ描画を実行する
+                    // 🎨 【軽量化③】ターゲット本人（またはロック前の通常時）のみ、赤い丸を省いて骨格線だけを描画
                     if (!isLocked || isTargetVisible) {
                         const lineColor = isLocked ? '#00FF66' : '#FFFFFF';
+                        // connectors（骨格線）だけを描画し、landmarks（赤い丸）の描画処理を削除
                         window.drawConnectors(canvasCtx, latestLandmarks, window.POSE_CONNECTIONS, {color: lineColor, lineWidth: 3});
-                        window.drawLandmarks(canvasCtx, latestLandmarks, {color: '#FF0000', radius: 4});
 
                         // 🙋‍♂️ アクション＆カウント判定
                         const noseY = latestLandmarks[0].y;
@@ -231,17 +243,15 @@
                             statusText.innerText = `🧘 カウントb: ${countB}`;
                         } else if (!isSquatting && (currentHipY < defaultHipY + 0.05)) { wasStanding = true; }
                     } else {
-                        // 👁️‍🗨️ ターゲット本人でない別人の場合は、キャンバスへの骨格描画もカウント判定も一切行わない（完全シカト）
                         statusText.innerText = "🔍 ターゲットの戻りを待っています...（別人を完全に無視中）";
                     }
 
                 } else {
-                    // ⚠️ 誰も映っていない、または完全に見失った瞬間
+                    // ⚠️ 見失った瞬間
                     latestLandmarks = null;
                     if (isLocked && isTargetVisible) {
-                        isTargetVisible = false; // ターゲット捜索モードへ
+                        isTargetVisible = false; 
 
-                        // 消えた座標から方向を特定
                         let direction = "";
                         if (lastKnownNosePosition.x < 0.35) direction = "左端";
                         else if (lastKnownNosePosition.x > 0.65) direction = "右端";
@@ -254,9 +264,22 @@
                 }
             });
 
+            // 🎥 【軽量化⑤】通常ループ ＆ 見失い時の省電力（間引き）処理
             const frameLoop = async () => {
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                    await pose.send({ image: video });
+                    
+                    if (isLocked && !isTargetVisible) {
+                        // 🔋 ターゲットを見失っている間（省電力モード）：
+                        // AI判定を2フレームに1回（フレームレート半分）に間引いてCPU負荷を下げます
+                        frameSkipCounter++;
+                        if (frameSkipCounter % 2 === 0) {
+                            await pose.send({ image: video });
+                        }
+                    } else {
+                        // 通常時（ロック前、またはターゲット追従中）：
+                        // ラグなしで毎フレーム最高速で処理します
+                        await pose.send({ image: video });
+                    }
                 }
                 window.requestAnimationFrame(frameLoop);
             };
