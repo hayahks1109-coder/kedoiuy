@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>クロップ追従 × ロックオングリッドカウンター</title>
+    <title>色・方向ダブル記憶 × アクションカウンター</title>
     <style>
         html, body {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -17,13 +17,6 @@
         
         #webcam { width: 100%; height: 100%; object-fit: cover; }
         #output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-
-        /* 全体用の3等分グリッド線（非ロック時用） */
-        .grid-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; transition: opacity 0.3s; }
-        .grid-line-v1 { position: absolute; top: 0; left: 33.3%; width: 1px; height: 100%; background: rgba(255,255,255,0.3); }
-        .grid-line-v2 { position: absolute; top: 0; left: 66.6%; width: 1px; height: 100%; background: rgba(255,255,255,0.3); }
-        .grid-line-h1 { position: absolute; top: 33.3%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.3); }
-        .grid-line-h2 { position: absolute; top: 66.6%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.3); }
 
         /* 📱 UIレイヤー */
         .ui-layer {
@@ -54,25 +47,17 @@
     <div class="camera-container">
         <video id="webcam" autoplay playsinline muted></video>
         <canvas id="output_canvas"></canvas>
-        <div id="default_grid" class="grid-overlay">
-            <div class="grid-line-v1"></div>
-            <div class="grid-line-v2"></div>
-            <div class="grid-line-h1"></div>
-            <div class="grid-line-h2"></div>
-        </div>
     </div>
 
     <div class="ui-layer">
-        <h1>超高速クロップ追従・カウンター</h1>
-        <div class="sub-title">タップした人の周辺をGPUで瞬時に切り抜き、個別追従枠を表示します</div>
+        <h1>特定人物追従カウンター</h1>
+        <div class="sub-title">タップでロック。見失っても「消えた方向」と「服の色」が一致すれば自動復帰します</div>
         <div class="counters-wrapper">
             <div class="counter-box">手を挙げる(A): <span id="count_numA" class="count-num">0</span></div>
             <div class="counter-box">しゃがむ(b): <span id="count_numB" class="count-num">0</span></div>
         </div>
         <p id="status">ｼｽﾃﾑ起動中...</p>
     </div>
-
-    <canvas id="crop_canvas" style="display: none;"></canvas>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -84,11 +69,6 @@
         const countNumB = document.getElementById('count_numB');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
-        const defaultGrid = document.getElementById('default_grid');
-
-        // クロップ処理用オフスクリーンCanvas
-        const cropCanvas = document.getElementById('crop_canvas');
-        const cropCtx = cropCanvas.getContext('2d');
 
         let countA = 0;
         let countB = 0;
@@ -97,14 +77,14 @@
         let wasStanding = true;
         let defaultHipY = null; 
 
-        // 🎯 ロックオン＆クロップ座標管理
+        // 🎯 ロックオン＆特徴データ管理
         let latestLandmarks = null;
-        let isLocked = false;
+        let isLocked = false;               // ロックオンが有効かどうか
+        let isTargetVisible = false;        // ロックしたターゲットが現在見えているか
         
-        // クロップ窓（切り取る枠）の情報（比率 0.0 〜 1.0）
-        // 初期値は中央付近
-        let cropArea = { x: 0.25, y: 0.15, width: 0.5, height: 0.5 }; 
-        const cropSizePercent = 0.45; // クロップ領域の大きさ（画面幅の45%で1人をすっぽり囲む）
+        // 🧠 ターゲットの特徴記憶バンク
+        let savedColor = null;              // ターゲットの服の色（HSL）
+        let lastKnownNosePosition = { x: 0.5, y: 0.5 }; // 見失った最後の座標（鼻の位置）
 
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
@@ -119,33 +99,58 @@
                 });
         }
 
+        // 📸 服の色（胸元付近）のピクセルからHSL色を取得する関数
+        function getBodyColor(landmarks) {
+            if (!video.videoWidth || !landmarks) return null;
+            
+            // 左肩(11)と右肩(12)の中間（胸元）の座標を計算
+            const midX = Math.floor(((landmarks[11].x + landmarks[12].x) / 2) * canvasElement.width);
+            const midY = Math.floor(((landmarks[11].y + landmarks[12].y) / 2) * canvasElement.height);
+
+            try {
+                // 指定座標の1ピクセルデータを取得
+                const pixel = canvasCtx.getImageData(midX, midY, 1, 1).data;
+                let r = pixel[0] / 255, g = pixel[1] / 255, b = pixel[2] / 255;
+                let max = Math.max(r, g, b), min = Math.min(r, g, b);
+                let h, s, l = (max + min) / 2;
+
+                if (max === min) { h = s = 0; } 
+                else {
+                    let d = max - min;
+                    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                    switch (max) {
+                        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                        case g: h = (b - r) / d + 2; break;
+                        case b: h = (r - g) / d + 4; break;
+                    }
+                    h /= 6;
+                }
+                return { h: h * 360, s: s * 100, l: l * 100 }; // 色相(H)、彩度(S)、明度(L)
+            } catch (e) {
+                return null;
+            }
+        }
+
         // 👆 画面タップ時のロックオン処理
         canvasElement.addEventListener('click', (event) => {
-            const rect = canvasElement.getBoundingClientRect();
-            const tapX = (event.clientX - rect.left) / rect.width;
-            const tapY = (event.clientY - rect.top) / rect.height;
-
-            if (!isLocked) {
-                // 🔒 ロックオン開始：タップされた位置を中心にクロップエリアを設定
-                cropArea.x = Math.max(0, tapX - cropSizePercent / 2);
-                cropArea.y = Math.max(0, tapY - cropSizePercent / 2);
-                // 画面外にはみ出さないようにガード
-                if (cropArea.x + cropSizePercent > 1) cropArea.x = 1 - cropSizePercent;
-                if (cropArea.y + cropSizePercent > 1) cropArea.y = 1 - cropSizePercent;
-
+            if (latestLandmarks) {
                 isLocked = true;
-                defaultGrid.style.opacity = "0"; // 全体グリッドを消す
-                statusText.innerText = "🎯 ロックオン完了！緑枠内のターゲットのみを追従中...";
+                isTargetVisible = true;
                 
-                // 判定リセット
+                // 🎯 タップした瞬間の「服の色」と「位置」を記憶に焼き付ける
+                savedColor = getBodyColor(latestLandmarks);
+                lastKnownNosePosition = { x: latestLandmarks[0].x, y: latestLandmarks[0].y };
+                
+                statusText.innerText = "🎯 ターゲットの「服の色」と「位置」を記憶してロックしました！";
+                
                 wasHandDown = true;
                 wasStanding = true;
                 defaultHipY = null;
             } else {
-                // 🔓 ロック解除：もう一度タップで全体スキャンに戻る
                 isLocked = false;
-                defaultGrid.style.opacity = "1"; // 全体グリッドを戻す
-                statusText.innerText = "🔓 ロック解除。全体スキャンに戻りました。";
+                isTargetVisible = false;
+                savedColor = null;
+                statusText.innerText = "🔓 ロック解除しました。";
             }
         });
 
@@ -155,7 +160,7 @@
             });
 
             pose.setOptions({
-                modelComplexity: 2,
+                modelComplexity: 1,
                 smoothLandmarks: true,
                 enableSegmentation: false,
                 minDetectionConfidence: 0.8,
@@ -167,143 +172,94 @@
                 canvasElement.height = video.videoHeight || window.innerHeight;
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-                let rawLandmarks = results.poseLandmarks;
-
-                if (rawLandmarks) {
-                    let adjustedLandmarks = [];
+                if (results.poseLandmarks) {
+                    latestLandmarks = results.poseLandmarks;
+                    const nose = latestLandmarks[0];
 
                     if (isLocked) {
-                        // 変換処理：クロップ内の座標（0〜1）を、メイン画面全体（0〜1）の座標に逆翻訳する
-                        rawLandmarks.forEach((lm) => {
-                            adjustedLandmarks.push({
-                                x: cropArea.x + (lm.x * cropSizePercent),
-                                y: cropArea.y + (lm.y * cropSizePercent),
-                                z: lm.z,
-                                visibility: lm.visibility
-                            });
-                        });
-                        latestLandmarks = adjustedLandmarks;
-                    } else {
-                        latestLandmarks = rawLandmarks;
+                        const currentColor = getBodyColor(latestLandmarks);
+
+                        if (!isTargetVisible) {
+                            // 🔍 【ダブル復帰判定】ターゲットがカメラに戻ってきたかをチェック
+                            if (currentColor && savedColor) {
+                                // 1. 最後に消えた座標との距離を計算
+                                const dist = Math.sqrt(Math.pow(nose.x - lastKnownNosePosition.x, 2) + Math.pow(nose.y - lastKnownNosePosition.y, 2));
+                                
+                                // 2. 服の色相(H)の差分を計算
+                                let hDiff = Math.abs(savedColor.h - currentColor.h);
+                                if (hDiff > 180) hDiff = 360 - hDiff;
+
+                                // 💡 条件：最後に消えた端から近く(35%以内)、かつ服の色相ズレが35度以内なら「本人」とみなす
+                                if (dist < 0.35 && hDiff < 35) {
+                                    isTargetVisible = true;
+                                    statusText.innerText = "🔄 服の色と位置が一致！自動ロックオンを復帰しました！";
+                                }
+                            }
+                        }
+
+                        if (isTargetVisible) {
+                            // 追従中は、現在の位置を常に「最後に確認された位置」として更新し続ける
+                            lastKnownNosePosition = { x: nose.x, y: nose.y };
+                        }
                     }
 
                     // 🎨 骨格の描画
-                    const lineColor = isLocked ? '#00FF66' : '#FFFFFF';
-                    window.drawConnectors(canvasCtx, latestLandmarks, window.POSE_CONNECTIONS, {color: lineColor, lineWidth: 3});
-                    window.drawLandmarks(canvasCtx, latestLandmarks, {color: '#FF0000', radius: 4});
-
-                    // 🧠 クロップ領域の自動追従（ターゲットの「鼻（0番）」を中心に自動スライド）
-                    if (isLocked) {
-                        const targetNose = latestLandmarks[0];
-                        // ターゲットが少し動いたら、その方向へ追従枠（cropArea）をなめらかに移動させる
-                        let targetX = targetNose.x - cropSizePercent / 2;
-                        let targetY = targetNose.y - cropSizePercent / 2;
-
-                        // 急激なワープを防ぎ、なめらかに追従させる（線形補間）
-                        cropArea.x += (targetX - cropArea.x) * 0.2;
-                        cropArea.y += (targetY - cropArea.y) * 0.2;
-
-                        // 画面外へのはみ出しガード
-                        cropArea.x = Math.max(0, Math.min(1 - cropSizePercent, cropArea.x));
-                        cropArea.y = Math.max(0, Math.min(1 - cropSizePercent, cropArea.y));
+                    if (!isLocked || isTargetVisible) {
+                        const lineColor = isLocked ? '#00FF66' : '#FFFFFF';
+                        window.drawConnectors(canvasCtx, latestLandmarks, window.POSE_CONNECTIONS, {color: lineColor, lineWidth: 3});
+                        window.drawLandmarks(canvasCtx, latestLandmarks, {color: '#FF0000', radius: 4});
+                    } else {
+                        // ターゲットではない別人はグレー描画にして、カウントを完全に無視する
+                        window.drawConnectors(canvasCtx, latestLandmarks, window.POSE_CONNECTIONS, {color: '#444444', lineWidth: 1});
+                        window.drawLandmarks(canvasCtx, latestLandmarks, {color: '#666666', radius: 1});
+                        statusText.innerText = "🔍 ターゲットの戻りを待っています...（別人を無視中）";
                     }
 
-                    // 🙋‍♂️ アクション＆カウント判定
-                    const noseY = latestLandmarks[0].y;
-                    const leftWristY = latestLandmarks[15].y;
-                    const rightWristY = latestLandmarks[16].y;
-                    const currentHipY = (latestLandmarks[23].y + latestLandmarks[24].y) / 2;
+                    // 🙋‍♂️ アクション＆カウント判定（ロックされたターゲットのみが対象）
+                    if (!isLocked || isTargetVisible) {
+                        const noseY = latestLandmarks[0].y;
+                        const leftWristY = latestLandmarks[15].y;
+                        const rightWristY = latestLandmarks[16].y;
+                        const currentHipY = (latestLandmarks[23].y + latestLandmarks[24].y) / 2;
 
-                    if (defaultHipY === null) { defaultHipY = currentHipY; }
+                        if (defaultHipY === null) { defaultHipY = currentHipY; }
 
-                    const isHandUp = (leftWristY < noseY) || (rightWristY < noseY);
-                    const isSquatting = (currentHipY > defaultHipY + 0.15);
+                        const isHandUp = (leftWristY < noseY) || (rightWristY < noseY);
+                        const isSquatting = (currentHipY > defaultHipY + 0.15);
 
-                    if (isHandUp && wasHandDown) {
-                        countA++; countNumA.innerText = countA; wasHandDown = false;
-                        statusText.innerText = `🙋‍♂️ カウントA: ${countA}`;
-                    } else if (!isHandUp) { wasHandDown = true; }
+                        if (isHandUp && wasHandDown) {
+                            countA++; countNumA.innerText = countA; wasHandDown = false;
+                            statusText.innerText = `🙋‍♂️ カウントA: ${countA}`;
+                        } else if (!isHandUp) { wasHandDown = true; }
 
-                    if (isSquatting && wasStanding) {
-                        countB++; countNumB.innerText = countB; wasStanding = false;
-                        statusText.innerText = `🧘 カウントb: ${countB}`;
-                    } else if (!isSquatting && (currentHipY < defaultHipY + 0.05)) { wasStanding = true; }
+                        if (isSquatting && wasStanding) {
+                            countB++; countNumB.innerText = countB; wasStanding = false;
+                            statusText.innerText = `🧘 カウントb: ${countB}`;
+                        } else if (!isSquatting && (currentHipY < defaultHipY + 0.05)) { wasStanding = true; }
+                    }
 
                 } else {
-                    // 見失ったときの処理
-                    if (isLocked) {
-                        statusText.innerText = "🔍 ターゲットを捜索中...（自動復帰枠を表示中）";
-                    } else {
-                        statusText.innerText = "人が映っていません";
+                    // ⚠️ 誰も映っていない、または完全に見失った瞬間
+                    latestLandmarks = null;
+                    if (isLocked && isTargetVisible) {
+                        isTargetVisible = false; // ターゲット捜索モードへ
+
+                        // 最後に消えた座標から方向テキストを作成
+                        let direction = "";
+                        if (lastKnownNosePosition.x < 0.35) direction = "左端";
+                        else if (lastKnownNosePosition.x > 0.65) direction = "右端";
+                        else if (lastKnownNosePosition.y < 0.35) direction = "上端";
+                        else if (lastKnownNosePosition.y > 0.65) direction = "下端";
+                        else direction = "中央付近";
+
+                        statusText.innerText = `🔍 ターゲットが【${direction}】から消えました。同じ服の色の再入場を待っています...`;
                     }
-                }
-
-                // 🟩 【重要】ロックオングリッド線の描画
-                if (isLocked) {
-                    const l = cropArea.x * canvasElement.width;
-                    const t = cropArea.y * canvasElement.height;
-                    const w = cropSizePercent * canvasElement.width;
-                    const h = cropSizePercent * canvasElement.height;
-
-                    // 外枠（緑）
-                    canvasCtx.strokeStyle = '#00FF66';
-                    canvasCtx.lineWidth = 3;
-                    canvasCtx.strokeRect(l, t, w, h);
-
-                    // 内側の細いターゲットグリッド（3等分）
-                    canvasCtx.strokeStyle = 'rgba(0, 255, 102, 0.2)';
-                    canvasCtx.lineWidth = 1;
-                    
-                    // 縦の補助線2本
-                    canvasCtx.beginPath();
-                    canvasCtx.moveTo(l + w/3, t); canvasCtx.lineTo(l + w/3, t + h);
-                    canvasCtx.moveTo(l + (w/3)*2, t); canvasCtx.lineTo(l + (w/3)*2, t + h);
-                    // 横の補助線2本
-                    canvasCtx.moveTo(l, t + h/3); canvasCtx.lineTo(l + w, t + h/3);
-                    canvasCtx.moveTo(l, t + (h/3)*2); canvasCtx.lineTo(l + w, t + (h/3)*2);
-                    canvasCtx.stroke();
-
-                    // 四隅のカッコいいターゲットマーク
-                    canvasCtx.strokeStyle = '#00FF66';
-                    canvasCtx.lineWidth = 5;
-                    const cornerSize = 15;
-                    
-                    // 左上
-                    canvasCtx.beginPath(); canvasCtx.moveTo(l, t + cornerSize); canvasCtx.lineTo(l, t); canvasCtx.lineTo(l + cornerSize, t); canvasCtx.stroke();
-                    // 右上
-                    canvasCtx.beginPath(); canvasCtx.moveTo(l + w - cornerSize, t); canvasCtx.lineTo(l + w, t); canvasCtx.lineTo(l + w, t + cornerSize); canvasCtx.stroke();
-                    // 左下
-                    canvasCtx.beginPath(); canvasCtx.moveTo(l, t + h - cornerSize); canvasCtx.lineTo(l, t + h); canvasCtx.lineTo(l + cornerSize, t + h); canvasCtx.stroke();
-                    // 右下
-                    canvasCtx.beginPath(); canvasCtx.moveTo(l + w - cornerSize, t + h); canvasCtx.lineTo(l + w, t + h); canvasCtx.lineTo(l + w, t + h - cornerSize); canvasCtx.stroke();
                 }
             });
 
-            // ⚡ GPU（HTML Canvas）を利用した超高速な1人分の映像の切り出し処理
             const frameLoop = async () => {
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                    const vw = video.videoWidth;
-                    const vh = video.videoHeight;
-
-                    if (isLocked) {
-                        // 🔒 ロック中は、動画の一部（cropArea部分）だけを切り取って小さなCanvasに描画
-                        cropCanvas.width = 256; // AIの解析に最適な軽量解像度
-                        cropCanvas.height = 256;
-
-                        const sx = cropArea.x * vw;
-                        const sy = cropArea.y * vh;
-                        const sw = cropSizePercent * vw;
-                        const sh = cropSizePercent * vh;
-
-                        // GPUで高速切り出し描画（ラグ0）
-                        cropCtx.drawImage(video, sx, sy, sw, sh, 0, 0, 256, 256);
-                        
-                        // 切り取ったミニ映像だけをAIに送り、1人として解析させる
-                        await pose.send({ image: cropCanvas });
-                    } else {
-                        // 🔓 ロック前は通常通り全体を送る
-                        await pose.send({ image: video });
-                    }
+                    await pose.send({ image: video });
                 }
                 window.requestAnimationFrame(frameLoop);
             };
