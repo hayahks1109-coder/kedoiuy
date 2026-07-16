@@ -155,11 +155,11 @@
             });
 
             pose.setOptions({
-                modelComplexity: 1,
+                modelComplexity: 2,
                 smoothLandmarks: true,
                 enableSegmentation: false,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
+                minDetectionConfidence: 0.8,
+                minTrackingConfidence: 0.8
             });
 
             pose.onResults((results) => {
