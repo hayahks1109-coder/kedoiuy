@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>特定人物追従カウンター（誤認識完全ガード版）</title>
+    <title>特定人物追従カウンター（誤認識徹底排除版）</title>
     <style>
         html, body {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -50,7 +50,7 @@
 
     <div class="ui-layer">
         <h1>特定人物追従カウンター</h1>
-        <div class="sub-title">4方向画面外厳密判定 ＆ 別人誤認識防止ガード搭載</div>
+        <div class="sub-title">【確定版】復帰時の服の色リアルタイム同期 ＆ 4方向完全防衛</div>
         <div class="counters-wrapper">
             <div class="counter-box">手を挙げる(A): <span id="count_numA" class="count-num">0</span></div>
             <div class="counter-box">しゃがむ(b): <span id="count_numB" class="count-num">0</span></div>
@@ -76,16 +76,13 @@
         let wasStanding = true;
         let defaultHipY = null; 
 
-        // 🎯 ロックオン＆特徴データ管理
         let latestLandmarks = null;
         let isLocked = false;               
         let isTargetVisible = false;        
         
         let savedColor = null;              
-        let lastKnownNosePosition = { x: 0.5, y: 0.5 }; 
-        let exitDirection = "";             // 固定された消去方向（上端、下端、左端、右端）
+        let exitDirection = "";             
 
-        // ⏱️ 軽量化タイマー・間引きフラグ
         let lastColorCheckTime = 0;         
         let frameSkipCounter = 0;           
 
@@ -134,15 +131,14 @@
             }
         }
 
-        // 👆 タップでロックオン
         canvasElement.addEventListener('click', () => {
             if (latestLandmarks) {
                 isLocked = true;
                 isTargetVisible = true;
                 exitDirection = "";
                 
+                // タップした瞬間に元のターゲットの色を100%正確に強制保存
                 savedColor = getBodyColor(latestLandmarks);
-                lastKnownNosePosition = { x: latestLandmarks[0].x, y: latestLandmarks[0].y };
                 lastColorCheckTime = Date.now();
                 
                 statusText.innerText = "🎯 ターゲットを確定し、ロックオンしました！";
@@ -182,42 +178,40 @@
                     const nose = latestLandmarks[0];
 
                     if (isLocked) {
-                        const now = Date.now();
-                        let currentColor = null;
-
-                        if (now - lastColorCheckTime > 1000) {
-                            currentColor = getBodyColor(latestLandmarks);
-                            lastColorCheckTime = now;
+                        // 🚨 リアルタイム離脱方向判定（端18%の防衛ラインを突破した瞬間）
+                        if (isTargetVisible) {
+                            if (nose.x <= 0.18) { exitDirection = "左端"; isTargetVisible = false; } 
+                            else if (nose.x >= 0.82) { exitDirection = "右端"; isTargetVisible = false; } 
+                            else if (nose.y <= 0.18) { exitDirection = "上端"; isTargetVisible = false; } 
+                            else if (nose.y >= 0.82) { exitDirection = "下端"; isTargetVisible = false; }
                         }
 
-                        if (!isTargetVisible) {
-                            // 🔍 【復帰判定の厳密化】
-                            const checkColor = currentColor || getBodyColor(latestLandmarks);
+                        // 🔍 【復帰判定のバグ修正】
+                        if (!isTargetVisible && exitDirection !== "") {
                             
-                            if (checkColor && savedColor && exitDirection !== "") {
-                                // 1. 服の色相(H)の差
-                                let hDiff = Math.abs(savedColor.h - checkColor.h);
-                                if (hDiff > 180) hDiff = 360 - hDiff;
+                            // 1. まず位置（入場ルート）の境界線チェック（端20%以内か）
+                            let isCorrectEntrance = false;
+                            if (exitDirection === "左端" && nose.x < 0.20) isCorrectEntrance = true;
+                            if (exitDirection === "右端" && nose.x > 0.80) isCorrectEntrance = true;
+                            if (exitDirection === "上端" && nose.y < 0.20) isCorrectEntrance = true;
+                            if (exitDirection === "下端" && nose.y > 0.80) isCorrectEntrance = true;
 
-                                // 2. 新しく映った人が「消えた端」の条件を満たしているかチェック（境界を25%に厳密化）
-                                let isCorrectEntrance = false;
-                                if (exitDirection === "左端" && nose.x < 0.25) isCorrectEntrance = true;
-                                if (exitDirection === "右端" && nose.x > 0.75) isCorrectEntrance = true;
-                                if (exitDirection === "上端" && nose.y < 0.25) isCorrectEntrance = true;
-                                if (exitDirection === "下端" && nose.y > 0.75) isCorrectEntrance = true;
+                            // 2. 正しい端から入ってきた場合のみ、色の取得を「強制リアルタイム実行」して厳密審査
+                            if (isCorrectEntrance) {
+                                const immediateColor = getBodyColor(latestLandmarks); // 1秒タイマーを無視して今すぐスキャン
+                                
+                                if (immediateColor && savedColor) {
+                                    let hDiff = Math.abs(savedColor.h - immediateColor.h);
+                                    if (hDiff > 180) hDiff = 360 - hDiff;
 
-                                // 色が一致し、かつ正しい「消えた方向の端」から再入場した場合のみロック復帰
-                                if (isCorrectEntrance && hDiff < 35) {
-                                    isTargetVisible = true;
-                                    exitDirection = "";
-                                    statusText.innerText = "🔄 ターゲットが戻りました！自動追従を再開します。";
+                                    // 色相の差が30度以内で完全に一致（白と黒ならここで絶対に弾かれます）
+                                    if (hDiff < 30) {
+                                        isTargetVisible = true;
+                                        exitDirection = "";
+                                        statusText.innerText = "🔄 ターゲットが戻りました！自動追従を再開します。";
+                                    }
                                 }
                             }
-                        }
-
-                        if (isTargetVisible) {
-                            // ターゲットが見えている時だけ、現在の鼻の位置を毎フレーム正確に記憶
-                            lastKnownNosePosition = { x: nose.x, y: nose.y };
                         }
                     }
 
@@ -251,41 +245,10 @@
                     }
 
                 } else {
-                    // ⚠️ 完全に誰も映っていない、またはターゲットがフレームアウトした瞬間
                     latestLandmarks = null;
-                    if (isLocked && isTargetVisible) {
-                        isTargetVisible = false; 
-
-                        // 🚨 【4方向完全厳密判定】中央付近は徹底排除（端20%のエリアで判定）
-                        // 画面外に突き抜けた座標から、明確に上下左右を確定させる
-                        if (lastKnownNosePosition.x <= 0.25) {
-                            exitDirection = "左端";
-                        } else if (lastKnownNosePosition.x >= 0.75) {
-                            exitDirection = "右端";
-                        } else if (lastKnownNosePosition.y <= 0.25) {
-                            exitDirection = "上端";
-                        } else if (lastKnownNosePosition.y >= 0.75) {
-                            exitDirection = "下端";
-                        } else {
-                            // 万が一中央付近でブレて見失った場合は、安全のため最後に近かった一番極端な端を割り振る
-                            const distToLeft = lastKnownNosePosition.x;
-                            const distToRight = 1 - lastKnownNosePosition.x;
-                            const distToTop = lastKnownNosePosition.y;
-                            const distToBottom = 1 - lastKnownNosePosition.y;
-                            const minDist = Math.min(distToLeft, distToRight, distToTop, distToBottom);
-                            
-                            if (minDist === distToLeft) exitDirection = "左端";
-                            else if (minDist === distToRight) exitDirection = "右端";
-                            else if (minDist === distToTop) exitDirection = "上端";
-                            else exitDirection = "下端";
-                        }
-
-                        statusText.innerText = `🔍 ターゲットが【${exitDirection}】から消えました。本人の再入場を待っています...`;
-                    }
                 }
             });
 
-            // 🎥 見失い時の省電力ループ
             const frameLoop = async () => {
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
                     if (isLocked && !isTargetVisible) {
