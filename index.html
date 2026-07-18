@@ -2,290 +2,230 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>特定人物追従カウンター（データ可視化版）</title>
-    <style>
-        html, body {
-            margin: 0; padding: 0; width: 100%; height: 100%;
-            overflow: hidden; background-color: #000; font-family: sans-serif;
-        }
-
-        .camera-container {
-            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-            overflow: hidden;
-        }
-        
-        #webcam { width: 100%; height: 100%; object-fit: cover; }
-        #output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-
-        .ui-layer {
-            position: absolute; top: 0; left: 0; width: 100%; padding: 20px;
-            box-sizing: border-box;
-            background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%);
-            pointer-events: none; text-align: center; z-index: 10;
-        }
-
-        h1 { font-size: 1.1rem; margin: 0 0 5px 0; color: #fff; }
-        .sub-title { font-size: 0.8rem; color: #00FF66; margin: 0 0 10px 0; font-weight: bold; }
-        
-        .counters-wrapper { display: flex; justify-content: center; gap: 15px; margin-top: 5px; }
-        .counter-box {
-            background: rgba(0, 0, 0, 0.6); padding: 8px 15px; border-radius: 20px;
-            font-size: 1.1rem; font-weight: bold; color: #fff; min-width: 120px;
-        }
-        .count-num { font-size: 2rem; margin-left: 8px; vertical-align: middle; }
-        #count_numA { color: #00FF66; }
-        #count_numB { color: #FFCC00; }
-
-        /* 🎨 可視化データ用スタイル */
-        .debug-panel {
-            display: flex; justify-content: center; align-items: center; gap: 10px;
-            margin-top: 10px; background: rgba(0, 0, 0, 0.7); padding: 8px 15px;
-            border-radius: 10px; color: #fff; font-size: 0.85rem;
-            width: fit-content; margin-left: auto; margin-right: auto;
-        }
-        .color-preview {
-            width: 40px; height: 20px; border-radius: 4px; border: 2px solid #fff;
-            background-color: transparent; display: inline-block; vertical-align: middle;
-        }
-
-        #status { font-weight: bold; color: #ddd; margin: 12px 0 0 0; font-size: 0.9rem; }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>特定人物追従カウンター</title>
+    <!-- MediaPipe Pose 読み込み -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; font-family: sans-serif; background: #222; color: #fff; overflow: hidden; }
+        #header { position: absolute; top: 0; width: 100%; text-align: center; background: rgba(0,0,0,0.7); padding: 10px 0; z-index: 10; }
+        .counter-container { display: flex; justify-content: space-around; margin: 5px 20px; }
+        .counter { background: #333; padding: 10px 20px; border-radius: 10px; width: 40%; }
+        .counter-val { font-size: 24px; color: #0f0; font-weight: bold; }
+        #video-container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        video { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 2; }
+        #toast { position: absolute; top: 150px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); padding: 8px 16px; border-radius: 5px; font-size: 14px; z-index: 11; display: none; }
+        #lockon-toggle { position: absolute; top: 110px; left: 50%; transform: translateX(-50%); z-index: 11; }
+    </style>
 </head>
 <body>
 
-    <div class="camera-container">
-        <video id="webcam" autoplay playsinline muted></video>
-        <canvas id="output_canvas"></canvas>
+<div id="header">
+    <h2>特定人物追従カウンター</h2>
+    <div class="counter-container">
+        <div class="counter">手を挙げる(A): <div id="count-a" class="counter-val">0</div></div>
+        <div class="counter">しゃがむ(b): <div id="count-b" class="counter-val">0</div></div>
     </div>
+</div>
 
-    <div class="ui-layer">
-        <h1>特定人物追従カウンター</h1>
-        <div class="sub-title">内部データ可視化 ＆ 4方向完全防衛</div>
+<div id="lockon-toggle">
+    <label><input type="checkbox" id="lockon-mode" checked> ロックオンしたい人をタップしてください。</label>
+</div>
+
+<div id="toast"></div>
+
+<div id="video-container">
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="output_canvas"></canvas>
+</div>
+
+<script>
+const videoElement = document.getElementById('webcam');
+const canvasElement = document.getElementById('output_canvas');
+const canvasCtx = canvasElement.getContext('2d');
+const toast = document.getElementById('toast');
+const lockonModeCheck = document.getElementById('lockon-mode');
+
+// カウンター状態
+let countA = 0;
+let countB = 0;
+
+// 追従・ロックオン管理用ステート
+let trackingState = {
+    isTracking: false,
+    targetFeatures: null, // ロックオンしたターゲットの特徴（服の色など）
+    lostEdge: null,       // ロストした「端」の情報 ('LEFT', 'RIGHT', 'TOP', 'BOTTOM')
+    lastPosition: null    // 最後に確認されたターゲットの中心座標 {x, y}
+};
+
+const EDGE_THRESHOLD = 0.15; // 画面の端から15%以内のエリアを「端」と判定
+
+function showToast(message) {
+    toast.textContent = message;
+    toast.style.display = 'block';
+    setTimeout(() => { toast.style.display = 'none'; }, 3000);
+}
+
+// 座標が画面のどの「端」に位置しているかを判定する関数
+function getEdgeLocation(x, y) {
+    if (x < EDGE_THRESHOLD) return 'LEFT';
+    if (x > (1 - EDGE_THRESHOLD)) return 'RIGHT';
+    if (y < EDGE_THRESHOLD) return 'TOP';
+    if (y > (1 - EDGE_THRESHOLD)) return 'BOTTOM';
+    return 'CENTER'; // 画面中央付近
+}
+
+// タップによる初期ロックオン
+canvasElement.addEventListener('click', (e) => {
+    if (!lockonModeCheck.checked) return;
+    
+    const rect = canvasElement.getBoundingClientRect();
+    // カメラの反転（scaleX(-1)）を考慮したX座標の計算
+    const clickX = 1 - ((e.clientX - rect.left) / rect.width);
+    const clickY = (e.clientY - rect.top) / rect.height;
+
+    // 現在検知されている骨格から、タップ位置に最も近いものを探す（簡易判定）
+    if (latestPoseLandmarks) {
+        const hip = latestPoseLandmarks[11]; // 左腰を基準点とする例
+        const dist = Math.hypot(hip.x - clickX, hip.y - clickY);
         
-        <div class="counters-wrapper">
-            <div class="counter-box">手を挙げる(A): <span id="count_numA" class="count-num">0</span></div>
-            <div class="counter-box">しゃがむ(b): <span id="count_numB" class="count-num">0</span></div>
-        </div>
-
-        <!-- 👁️ 記憶データの可視化インジケーター -->
-        <div class="debug-panel">
-            <span>💾 記憶した服の色:</span>
-            <div id="color_indicator" class="color-preview"></div>
-            <span id="color_text">未登録</span>
-        </div>
-
-        <p id="status">ｼｽﾃﾑ起動中...</p>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-
-    <script>
-        const video = document.getElementById('webcam');
-        const statusText = document.getElementById('status');
-        const countNumA = document.getElementById('count_numA');
-        const countNumB = document.getElementById('count_numB');
-        const canvasElement = document.getElementById('output_canvas');
-        const canvasCtx = canvasElement.getContext('2d');
-
-        // 可視化UI要素
-        const colorIndicator = document.getElementById('color_indicator');
-        const colorText = document.getElementById('color_text');
-
-        let countA = 0;
-        let countB = 0;
-
-        let wasHandDown = true;
-        let wasStanding = true;
-        let defaultHipY = null; 
-
-        let latestLandmarks = null;
-        let isLocked = false;               
-        let isTargetVisible = false;        
-        
-        let savedColor = null;              
-        let exitDirection = "";             
-
-        function startCamera() {
-            statusText.innerText = "ｶﾒﾗを起動しています...";
-            navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: 640, height: 480 } })
-                .then((stream) => {
-                    video.srcObject = stream;
-                    statusText.innerText = "✅ ロックオンしたい人をタップしてください。";
-                    startPoseDetection();
-                })
-                .catch((err) => {
-                    statusText.innerText = "❌ ｶﾒﾗの起動に失敗しました: " + err;
-                });
+        if (dist < 0.2) { // 一定距離以内ならロックオン
+            trackingState.isTracking = true;
+            trackingState.lostEdge = null;
+            trackingState.lastPosition = { x: hip.x, y: hip.y };
+            showToast("ターゲットを確定し、ロックオンしました！");
         }
+    }
+});
 
-        // 📸 服の色の取得（胸元）
-        function getBodyColor(landmarks) {
-            if (!video.videoWidth || !landmarks) return null;
+let latestPoseLandmarks = null;
+
+function onResults(results) {
+    // キャンバスのサイズ調整
+    canvasElement.width = videoElement.videoWidth;
+    canvasElement.height = videoElement.videoHeight;
+    
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    
+    if (!results.poseLandmarks) {
+        // 誰一人映っていない（ロスト処理へ）
+        handleTrackingLost();
+        return;
+    }
+
+    latestPoseLandmarks = results.poseLandmarks;
+    const currentHip = latestPoseLandmarks[11]; // ターゲット判定用の代表点（腰）
+    const currentPosition = { x: currentHip.x, y: currentHip.y };
+
+    if (trackingState.isTracking) {
+        // 【追従中】座標を更新して骨格を描画
+        trackingState.lastPosition = currentPosition;
+        drawSkeleton(results.poseLandmarks);
+        checkActions(results.poseLandmarks);
+    } else {
+        // 【ロスト状態】かつ【過去に一度ロックオンしていた】場合のみ、再入場チェックを行う
+        if (trackingState.lostEdge) {
+            // 新しく映った人の初期位置の「端」を判定
+            const detectedEdge = getEdgeLocation(currentPosition.x, currentPosition.y);
             
-            const midX = Math.floor(((landmarks[11].x + landmarks[12].x) / 2) * canvasElement.width);
-            const midY = Math.floor(((landmarks[11].y + landmarks[12].y) / 2) * canvasElement.height);
-
-            if (midX < 0 || midX >= canvasElement.width || midY < 0 || midY >= canvasElement.height) return null;
-
-            try {
-                const pixel = canvasCtx.getImageData(midX, midY, 1, 1).data;
-                let r = pixel[0] / 255, g = pixel[1] / 255, b = pixel[2] / 255;
-                let max = Math.max(r, g, b), min = Math.min(r, g, b);
-                let h, s, l = (max + min) / 2;
-
-                if (max === min) { h = s = 0; } 
-                else {
-                    let d = max - min;
-                    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-                    switch (max) {
-                        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-                        case g: h = (b - r) / d + 2; break;
-                        case b: h = (r - g) / d + 4; break;
-                    }
-                    h /= 6;
-                }
-                return { h: h * 360, s: s * 100, l: l * 100 };
-            } catch (e) {
-                return null;
-            }
-        }
-
-        // 👆 タップで最初の1回だけ色を記憶し、UIに即座に反映
-        canvasElement.addEventListener('click', () => {
-            if (latestLandmarks) {
-                isLocked = true;
-                isTargetVisible = true;
-                exitDirection = "";
+            // 重要：ロストした端と、新しく現れた端が「完全に一致」した場合のみロックオンを復活させる
+            if (detectedEdge === trackingState.lostEdge) {
+                trackingState.isTracking = true;
+                trackingState.lostEdge = null;
+                trackingState.lastPosition = currentPosition;
+                showToast("ターゲットが戻りました！自動追従を再開します。");
                 
-                savedColor = getBodyColor(latestLandmarks);
-                
-                // 👁️ UI可視化処理
-                if (savedColor) {
-                    const hslCss = `hsl(${Math.round(savedColor.h)}, ${Math.round(savedColor.s)}%, ${Math.round(savedColor.l)}%)`;
-                    colorIndicator.style.backgroundColor = hslCss;
-                    colorText.innerText = `H:${Math.round(savedColor.h)} S:${Math.round(savedColor.s)}% L:${Math.round(savedColor.l)}%`;
-                }
-                
-                statusText.innerText = "🎯 ターゲットを確定し、ロックオンしました！";
-                
-                wasHandDown = true;
-                wasStanding = true;
-                defaultHipY = null;
+                drawSkeleton(results.poseLandmarks);
             } else {
-                isLocked = false;
-                isTargetVisible = false;
-                savedColor = null;
-                exitDirection = "";
-                
-                // 👁️ UIリセット
-                colorIndicator.style.backgroundColor = 'transparent';
-                colorText.innerText = "未登録";
-                
-                statusText.innerText = "🔓 ロック解除しました。";
+                // 条件（同じ端からではない）を満たさないため、骨格は検知してもロックオンせず無視する
+                console.log(`検知を無視: ロストした端=${trackingState.lostEdge}, 出現した端=${detectedEdge}`);
             }
-        });
-
-        function startPoseDetection() {
-            const pose = new window.Pose({
-                locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/pose/" + file
-            });
-
-            pose.setOptions({
-                modelComplexity: 1,
-                smoothLandmarks: true,
-                enableSegmentation: false,
-                minDetectionConfidence: 0.8,
-                minTrackingConfidence: 0.8
-            });
-
-            pose.onResults((results) => {
-                canvasElement.width = video.videoWidth || window.innerWidth;
-                canvasElement.height = video.videoHeight || window.innerHeight;
-                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-                if (results.poseLandmarks) {
-                    latestLandmarks = results.poseLandmarks;
-                    const nose = latestLandmarks[0];
-
-                    if (isLocked) {
-                        // 🚨 離脱判定（端18%）
-                        if (isTargetVisible) {
-                            if (nose.x <= 0.18) { exitDirection = "左端"; isTargetVisible = false; } 
-                            else if (nose.x >= 0.82) { exitDirection = "右端"; isTargetVisible = false; } 
-                            else if (nose.y <= 0.18) { exitDirection = "上端"; isTargetVisible = false; } 
-                            else if (nose.y >= 0.82) { exitDirection = "下端"; isTargetVisible = false; }
-                        }
-
-                        // 🔍 復帰判定
-                        if (!isTargetVisible && exitDirection !== "") {
-                            let isCorrectEntrance = false;
-                            if (exitDirection === "左端" && nose.x < 0.20) isCorrectEntrance = true;
-                            if (exitDirection === "右端" && nose.x > 0.80) isCorrectEntrance = true;
-                            if (exitDirection === "上端" && nose.y < 0.20) isCorrectEntrance = true;
-                            if (exitDirection === "下端" && nose.y > 0.80) isCorrectEntrance = true;
-
-                            if (isCorrectEntrance) {
-                                const incomingColor = getBodyColor(latestLandmarks);
-                                
-                                if (incomingColor && savedColor) {
-                                    let hDiff = Math.abs(savedColor.h - incomingColor.h);
-                                    if (hDiff > 180) hDiff = 360 - hDiff;
-
-                                    if (hDiff < 30) {
-                                        isTargetVisible = true;
-                                        exitDirection = "";
-                                        statusText.innerText = "🔄 ターゲットが戻りました！自動追従を再開します。";
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (!isLocked || isTargetVisible) {
-                        const lineColor = isLocked ? '#00FF66' : '#FFFFFF';
-                        window.drawConnectors(canvasCtx, latestLandmarks, window.POSE_CONNECTIONS, {color: lineColor, lineWidth: 3});
-
-                        const noseY = latestLandmarks[0].y;
-                        const leftWristY = latestLandmarks[15].y;
-                        const rightWristY = latestLandmarks[16].y;
-                        const currentHipY = (latestLandmarks[23].y + latestLandmarks[24].y) / 2;
-
-                        if (defaultHipY === null) { defaultHipY = currentHipY; }
-
-                        const isHandUp = (leftWristY < noseY) || (rightWristY < noseY);
-                        const isSquatting = (currentHipY > defaultHipY + 0.15);
-
-                        if (isHandUp && wasHandDown) {
-                            countA++; countNumA.innerText = countA; wasHandDown = false;
-                            statusText.innerText = `🙋‍♂️ カウントA: ${countA}`;
-                        } else if (!isHandUp) { wasHandDown = true; }
-
-                        if (isSquatting && wasStanding) {
-                            countB++; countNumB.innerText = countB; wasStanding = false;
-                            statusText.innerText = `🧘 カウントb: ${countB}`;
-                        } else if (!isSquatting && (currentHipY < defaultHipY + 0.05)) { wasStanding = true; }
-                    } else {
-                        statusText.innerText = `🔍 ターゲットが【${exitDirection}】から離脱中...（別人を無視しています）`;
-                    }
-
-                } else {
-                    latestLandmarks = null;
-                }
-            });
-
-            const frameLoop = async () => {
-                if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                    await pose.send({ image: video });
-                }
-                window.requestAnimationFrame(frameLoop);
-            };
-            frameLoop();
         }
+    }
+}
 
-        window.addEventListener('load', startCamera);
-    </script>
+// ロスト時の判定と処理
+function handleTrackingLost() {
+    if (trackingState.isTracking && trackingState.lastPosition) {
+        // 見失った瞬間の最後の座標から、どの端から消えたかを決定
+        const exitEdge = getEdgeLocation(trackingState.lastPosition.x, trackingState.lastPosition.y);
+        
+        // 画面中央で消えた（隠れただけ）の場合は、最後に近づいていた端を推測、またはCENTERとする
+        trackingState.lostEdge = exitEdge;
+        trackingState.isTracking = false;
+        
+        showToast(`ターゲットを見失いました。(${exitEdge}端エリアでロスト)`);
+    }
+}
+
+// 骨格の描画処理
+function drawSkeleton(landmarks) {
+    canvasCtx.fillStyle = '#00FF00';
+    canvasCtx.strokeStyle = '#00FF00';
+    canvasCtx.lineWidth = 4;
+
+    // 簡易的に肩から腰へのラインを描画（動画内の緑色のフレーム枠に相当）
+    const points = [11, 12, 24, 23]; // 両肩・両腰
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(landmarks[points[0]].x * canvasElement.width, landmarks[points[0]].y * canvasElement.height);
+    for(let i=1; i<points.length; i++) {
+        canvasCtx.lineTo(landmarks[points[i]].x * canvasElement.width, landmarks[points[i]].y * canvasElement.height);
+    }
+    canvasCtx.closePath();
+    canvasCtx.stroke();
+}
+
+// アクション（手を挙げる・しゃがむ）の検知ロジック
+let wasHandUp = false;
+let wasSquat = false;
+
+function checkActions(landmarks) {
+    const leftWrist = landmarks[15];
+    const leftShoulder = landmarks[11];
+    const leftHip = landmarks[23];
+
+    // 手を挙げる判定（手首が肩より上にあるか）
+    const isHandUp = leftWrist.y < leftShoulder.y - 0.1;
+    if (isHandUp && !wasHandUp) {
+        countA++;
+        document.getElementById('count-a').textContent = countA;
+    }
+    wasHandUp = isHandUp;
+
+    // しゃがむ判定（腰の位置が一定より下がるか、など簡易的な閾値設定）
+    const isSquat = leftHip.y > 0.7; 
+    if (isSquat && !wasSquat) {
+        countB++;
+        document.getElementById('count-b').textContent = countB;
+    }
+    wasSquat = isSquat;
+}
+
+// MediaPipe Pose セットアップ
+const pose = new Pose({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+});
+
+pose.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    enableSegmentation: false,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+});
+pose.onResults(onResults);
+
+const camera = new Camera(videoElement, {
+    onFrame: async () => {
+        await pose.send({image: videoElement});
+    },
+    width: 640,
+    height: 480
+});
+camera.start();
+
+</script>
 </body>
 </html>
