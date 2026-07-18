@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>軽量・特定人物追従カウンターyeah!!!thecera</title>
+    <title>特定人物追従カウンター（誤認識完全ガード版）</title>
     <style>
         html, body {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -18,7 +18,6 @@
         #webcam { width: 100%; height: 100%; object-fit: cover; }
         #output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 
-        /* 📱 UIレイヤー */
         .ui-layer {
             position: absolute; top: 0; left: 0; width: 100%; padding: 20px;
             box-sizing: border-box;
@@ -50,8 +49,8 @@
     </div>
 
     <div class="ui-layer">
-        <h1>特定人物追従カウンター（超軽量版）</h1>
-        <div class="sub-title">1秒ごとの色判定＆見失い時の省電力モードでラグを徹底カット</div>
+        <h1>特定人物追従カウンター</h1>
+        <div class="sub-title">4方向画面外厳密判定 ＆ 別人誤認識防止ガード搭載</div>
         <div class="counters-wrapper">
             <div class="counter-box">手を挙げる(A): <span id="count_numA" class="count-num">0</span></div>
             <div class="counter-box">しゃがむ(b): <span id="count_numB" class="count-num">0</span></div>
@@ -82,16 +81,16 @@
         let isLocked = false;               
         let isTargetVisible = false;        
         
-        let savedColor = null;              // HSL色
+        let savedColor = null;              
         let lastKnownNosePosition = { x: 0.5, y: 0.5 }; 
+        let exitDirection = "";             // 固定された消去方向（上端、下端、左端、右端）
 
         // ⏱️ 軽量化タイマー・間引きフラグ
-        let lastColorCheckTime = 0;         // 最後に色を計算した時間（ミリ秒）
-        let frameSkipCounter = 0;           // 見失い時のフレーム間引き用
+        let lastColorCheckTime = 0;         
+        let frameSkipCounter = 0;           
 
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
-            // 映像としてもきれいに使いたいとのことで、高画質な標準設定（640x480）のままにします
             navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: 640, height: 480 } })
                 .then((stream) => {
                     video.srcObject = stream;
@@ -103,12 +102,14 @@
                 });
         }
 
-        // 📸 【軽量化②】服の色の取得処理（必要なときだけ計算するように外に分離）
+        // 📸 服の色の取得（胸元）
         function getBodyColor(landmarks) {
             if (!video.videoWidth || !landmarks) return null;
             
             const midX = Math.floor(((landmarks[11].x + landmarks[12].x) / 2) * canvasElement.width);
             const midY = Math.floor(((landmarks[11].y + landmarks[12].y) / 2) * canvasElement.height);
+
+            if (midX < 0 || midX >= canvasElement.width || midY < 0 || midY >= canvasElement.height) return null;
 
             try {
                 const pixel = canvasCtx.getImageData(midX, midY, 1, 1).data;
@@ -133,16 +134,16 @@
             }
         }
 
-        // 👆 タップでロックオン開始
+        // 👆 タップでロックオン
         canvasElement.addEventListener('click', () => {
             if (latestLandmarks) {
                 isLocked = true;
                 isTargetVisible = true;
+                exitDirection = "";
                 
-                // タップした瞬間に最初の色と位置を強制記録
                 savedColor = getBodyColor(latestLandmarks);
                 lastKnownNosePosition = { x: latestLandmarks[0].x, y: latestLandmarks[0].y };
-                lastColorCheckTime = Date.now(); // タイマーリセット
+                lastColorCheckTime = Date.now();
                 
                 statusText.innerText = "🎯 ターゲットを確定し、ロックオンしました！";
                 
@@ -153,6 +154,7 @@
                 isLocked = false;
                 isTargetVisible = false;
                 savedColor = null;
+                exitDirection = "";
                 statusText.innerText = "🔓 ロック解除しました。";
             }
         });
@@ -162,7 +164,6 @@
                 locateFile: (file) => "https://cdn.jsdelivr.net/npm/@mediapipe/pose/" + file
             });
 
-            // 精度を維持するため、モデルは標準「1」のままとします
             pose.setOptions({
                 modelComplexity: 1,
                 smoothLandmarks: true,
@@ -184,42 +185,45 @@
                         const now = Date.now();
                         let currentColor = null;
 
-                        // ⏱️ 【軽量化②】1秒（1000ms）経っているときだけ、服の色を取得・更新する
                         if (now - lastColorCheckTime > 1000) {
                             currentColor = getBodyColor(latestLandmarks);
                             lastColorCheckTime = now;
                         }
 
                         if (!isTargetVisible) {
-                            // 🔍 【復帰判定】
-                            // 1秒に1回のタイミングで取得できた色、または最後に持っていた色がターゲットに近いか判定
+                            // 🔍 【復帰判定の厳密化】
                             const checkColor = currentColor || getBodyColor(latestLandmarks);
                             
-                            if (checkColor && savedColor) {
-                                const dist = Math.sqrt(Math.pow(nose.x - lastKnownNosePosition.x, 2) + Math.pow(nose.y - lastKnownNosePosition.y, 2));
-                                
+                            if (checkColor && savedColor && exitDirection !== "") {
+                                // 1. 服の色相(H)の差
                                 let hDiff = Math.abs(savedColor.h - checkColor.h);
                                 if (hDiff > 180) hDiff = 360 - hDiff;
 
-                                // 最後に消えた端の近く(35%以内)、かつ服の色(35度以内)
-                                if (dist < 0.35 && hDiff < 35) {
+                                // 2. 新しく映った人が「消えた端」の条件を満たしているかチェック（境界を25%に厳密化）
+                                let isCorrectEntrance = false;
+                                if (exitDirection === "左端" && nose.x < 0.25) isCorrectEntrance = true;
+                                if (exitDirection === "右端" && nose.x > 0.75) isCorrectEntrance = true;
+                                if (exitDirection === "上端" && nose.y < 0.25) isCorrectEntrance = true;
+                                if (exitDirection === "下端" && nose.y > 0.75) isCorrectEntrance = true;
+
+                                // 色が一致し、かつ正しい「消えた方向の端」から再入場した場合のみロック復帰
+                                if (isCorrectEntrance && hDiff < 35) {
                                     isTargetVisible = true;
+                                    exitDirection = "";
                                     statusText.innerText = "🔄 ターゲットが戻りました！自動追従を再開します。";
-                                } else {
-                                    isTargetVisible = false;
                                 }
                             }
                         }
 
                         if (isTargetVisible) {
+                            // ターゲットが見えている時だけ、現在の鼻の位置を毎フレーム正確に記憶
                             lastKnownNosePosition = { x: nose.x, y: nose.y };
                         }
                     }
 
-                    // 🎨 【軽量化③】ターゲット本人（またはロック前の通常時）のみ、赤い丸を省いて骨格線だけを描画
+                    // 🎨 【描画ガード】本人（またはロック前）のみ描画する
                     if (!isLocked || isTargetVisible) {
                         const lineColor = isLocked ? '#00FF66' : '#FFFFFF';
-                        // connectors（骨格線）だけを描画し、landmarks（赤い丸）の描画処理を削除
                         window.drawConnectors(canvasCtx, latestLandmarks, window.POSE_CONNECTIONS, {color: lineColor, lineWidth: 3});
 
                         // 🙋‍♂️ アクション＆カウント判定
@@ -243,41 +247,53 @@
                             statusText.innerText = `🧘 カウントb: ${countB}`;
                         } else if (!isSquatting && (currentHipY < defaultHipY + 0.05)) { wasStanding = true; }
                     } else {
-                        statusText.innerText = "🔍 ターゲットの戻りを待っています...（別人を完全に無視中）";
+                        statusText.innerText = `🔍 ターゲットが【${exitDirection}】から離脱中...（別人を完全に無視しています）`;
                     }
 
                 } else {
-                    // ⚠️ 見失った瞬間
+                    // ⚠️ 完全に誰も映っていない、またはターゲットがフレームアウトした瞬間
                     latestLandmarks = null;
                     if (isLocked && isTargetVisible) {
                         isTargetVisible = false; 
 
-                        let direction = "";
-                        if (lastKnownNosePosition.x < 0.35) direction = "左端";
-                        else if (lastKnownNosePosition.x > 0.65) direction = "右端";
-                        else if (lastKnownNosePosition.y < 0.35) direction = "上端";
-                        else if (lastKnownNosePosition.y > 0.65) direction = "下端";
-                        else direction = "中央付近";
+                        // 🚨 【4方向完全厳密判定】中央付近は徹底排除（端20%のエリアで判定）
+                        // 画面外に突き抜けた座標から、明確に上下左右を確定させる
+                        if (lastKnownNosePosition.x <= 0.25) {
+                            exitDirection = "左端";
+                        } else if (lastKnownNosePosition.x >= 0.75) {
+                            exitDirection = "右端";
+                        } else if (lastKnownNosePosition.y <= 0.25) {
+                            exitDirection = "上端";
+                        } else if (lastKnownNosePosition.y >= 0.75) {
+                            exitDirection = "下端";
+                        } else {
+                            // 万が一中央付近でブレて見失った場合は、安全のため最後に近かった一番極端な端を割り振る
+                            const distToLeft = lastKnownNosePosition.x;
+                            const distToRight = 1 - lastKnownNosePosition.x;
+                            const distToTop = lastKnownNosePosition.y;
+                            const distToBottom = 1 - lastKnownNosePosition.y;
+                            const minDist = Math.min(distToLeft, distToRight, distToTop, distToBottom);
+                            
+                            if (minDist === distToLeft) exitDirection = "左端";
+                            else if (minDist === distToRight) exitDirection = "右端";
+                            else if (minDist === distToTop) exitDirection = "上端";
+                            else exitDirection = "下端";
+                        }
 
-                        statusText.innerText = `🔍 ターゲットが【${direction}】から消えました。本人の再入場を待っています...`;
+                        statusText.innerText = `🔍 ターゲットが【${exitDirection}】から消えました。本人の再入場を待っています...`;
                     }
                 }
             });
 
-            // 🎥 【軽量化⑤】通常ループ ＆ 見失い時の省電力（間引き）処理
+            // 🎥 見失い時の省電力ループ
             const frameLoop = async () => {
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                    
                     if (isLocked && !isTargetVisible) {
-                        // 🔋 ターゲットを見失っている間（省電力モード）：
-                        // AI判定を2フレームに1回（フレームレート半分）に間引いてCPU負荷を下げます
                         frameSkipCounter++;
                         if (frameSkipCounter % 2 === 0) {
                             await pose.send({ image: video });
                         }
                     } else {
-                        // 通常時（ロック前、またはターゲット追従中）：
-                        // ラグなしで毎フレーム最高速で処理します
                         await pose.send({ image: video });
                     }
                 }
