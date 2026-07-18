@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>特定人物追従カウンター（誤認識徹底排除版）</title>
+    <title>特定人物追従カウンター（ピンポイント照合版）</title>
     <style>
         html, body {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -50,7 +50,7 @@
 
     <div class="ui-layer">
         <h1>特定人物追従カウンター</h1>
-        <div class="sub-title">【確定版】復帰時の服の色リアルタイム同期 ＆ 4方向完全防衛</div>
+        <div class="sub-title">入場時ピンポイント色照合 ＆ 4方向完全防衛</div>
         <div class="counters-wrapper">
             <div class="counter-box">手を挙げる(A): <span id="count_numA" class="count-num">0</span></div>
             <div class="counter-box">しゃがむ(b): <span id="count_numB" class="count-num">0</span></div>
@@ -80,11 +80,8 @@
         let isLocked = false;               
         let isTargetVisible = false;        
         
-        let savedColor = null;              
+        let savedColor = null; // 最初にタップした時の「一生モノの色の記憶」            
         let exitDirection = "";             
-
-        let lastColorCheckTime = 0;         
-        let frameSkipCounter = 0;           
 
         function startCamera() {
             statusText.innerText = "ｶﾒﾗを起動しています...";
@@ -131,15 +128,15 @@
             }
         }
 
+        // 👆 タップで最初の1回だけ色を記憶
         canvasElement.addEventListener('click', () => {
             if (latestLandmarks) {
                 isLocked = true;
                 isTargetVisible = true;
                 exitDirection = "";
                 
-                // タップした瞬間に元のターゲットの色を100%正確に強制保存
+                // 【ここで1度だけ記憶】
                 savedColor = getBodyColor(latestLandmarks);
-                lastColorCheckTime = Date.now();
                 
                 statusText.innerText = "🎯 ターゲットを確定し、ロックオンしました！";
                 
@@ -178,7 +175,7 @@
                     const nose = latestLandmarks[0];
 
                     if (isLocked) {
-                        // 🚨 リアルタイム離脱方向判定（端18%の防衛ラインを突破した瞬間）
+                        // 🚨 離脱判定（端18%を突破したら離脱方向を確定して見失い状態へ）
                         if (isTargetVisible) {
                             if (nose.x <= 0.18) { exitDirection = "左端"; isTargetVisible = false; } 
                             else if (nose.x >= 0.82) { exitDirection = "右端"; isTargetVisible = false; } 
@@ -186,25 +183,25 @@
                             else if (nose.y >= 0.82) { exitDirection = "下端"; isTargetVisible = false; }
                         }
 
-                        // 🔍 【復帰判定のバグ修正】
+                        // 🔍 【復帰判定：入場時にピンポイント照合】
                         if (!isTargetVisible && exitDirection !== "") {
                             
-                            // 1. まず位置（入場ルート）の境界線チェック（端20%以内か）
+                            // 条件1: 消えたのと同じ端（20%以内）に誰かが現れたか
                             let isCorrectEntrance = false;
                             if (exitDirection === "左端" && nose.x < 0.20) isCorrectEntrance = true;
                             if (exitDirection === "右端" && nose.x > 0.80) isCorrectEntrance = true;
                             if (exitDirection === "上端" && nose.y < 0.20) isCorrectEntrance = true;
                             if (exitDirection === "下端" && nose.y > 0.80) isCorrectEntrance = true;
 
-                            // 2. 正しい端から入ってきた場合のみ、色の取得を「強制リアルタイム実行」して厳密審査
                             if (isCorrectEntrance) {
-                                const immediateColor = getBodyColor(latestLandmarks); // 1秒タイマーを無視して今すぐスキャン
+                                // 条件2: 現れた人の色を「今この瞬間だけ1回」取得して、最初の記憶と照合
+                                const incomingColor = getBodyColor(latestLandmarks);
                                 
-                                if (immediateColor && savedColor) {
-                                    let hDiff = Math.abs(savedColor.h - immediateColor.h);
+                                if (incomingColor && savedColor) {
+                                    let hDiff = Math.abs(savedColor.h - incomingColor.h);
                                     if (hDiff > 180) hDiff = 360 - hDiff;
 
-                                    // 色相の差が30度以内で完全に一致（白と黒ならここで絶対に弾かれます）
+                                    // 最初の色と合致したらロックオン復帰
                                     if (hDiff < 30) {
                                         isTargetVisible = true;
                                         exitDirection = "";
@@ -215,12 +212,12 @@
                         }
                     }
 
-                    // 🎨 【描画ガード】本人（またはロック前）のみ描画する
+                    // 🎨 本人のみ描画
                     if (!isLocked || isTargetVisible) {
                         const lineColor = isLocked ? '#00FF66' : '#FFFFFF';
                         window.drawConnectors(canvasCtx, latestLandmarks, window.POSE_CONNECTIONS, {color: lineColor, lineWidth: 3});
 
-                        // 🙋‍♂️ アクション＆カウント判定
+                        // カウント判定
                         const noseY = latestLandmarks[0].y;
                         const leftWristY = latestLandmarks[15].y;
                         const rightWristY = latestLandmarks[16].y;
@@ -241,7 +238,7 @@
                             statusText.innerText = `🧘 カウントb: ${countB}`;
                         } else if (!isSquatting && (currentHipY < defaultHipY + 0.05)) { wasStanding = true; }
                     } else {
-                        statusText.innerText = `🔍 ターゲットが【${exitDirection}】から離脱中...（別人を完全に無視しています）`;
+                        statusText.innerText = `🔍 ターゲットが【${exitDirection}】から離脱中...（別人を無視しています）`;
                     }
 
                 } else {
@@ -249,16 +246,10 @@
                 }
             });
 
+            // 追従中も無駄なタイマー処理を挟まないため、最速でループを回します
             const frameLoop = async () => {
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                    if (isLocked && !isTargetVisible) {
-                        frameSkipCounter++;
-                        if (frameSkipCounter % 2 === 0) {
-                            await pose.send({ image: video });
-                        }
-                    } else {
-                        await pose.send({ image: video });
-                    }
+                    await pose.send({ image: video });
                 }
                 window.requestAnimationFrame(frameLoop);
             };
