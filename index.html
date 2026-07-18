@@ -14,6 +14,7 @@
         .counter { background: #333; padding: 10px 20px; border-radius: 10px; width: 40%; }
         .counter-val { font-size: 24px; color: #0f0; font-weight: bold; }
         #video-container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        /* 外カメラ用に左右反転(scaleX)を削除 */
         video { position: absolute; width: 100%; height: 100%; object-fit: cover; }
         canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 2; }
         #toast { position: absolute; top: 150px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); padding: 8px 16px; border-radius: 5px; font-size: 14px; z-index: 11; display: none; }
@@ -48,14 +49,12 @@ const canvasCtx = canvasElement.getContext('2d');
 const toast = document.getElementById('toast');
 const lockonModeCheck = document.getElementById('lockon-mode');
 
-// カウンター状態
 let countA = 0;
 let countB = 0;
 
 // 追従・ロックオン管理用ステート
 let trackingState = {
     isTracking: false,
-    targetFeatures: null, // ロックオンしたターゲットの特徴（服の色など）
     lostEdge: null,       // ロストした「端」の情報 ('LEFT', 'RIGHT', 'TOP', 'BOTTOM')
     lastPosition: null    // 最後に確認されたターゲットの中心座標 {x, y}
 };
@@ -77,21 +76,19 @@ function getEdgeLocation(x, y) {
     return 'CENTER'; // 画面中央付近
 }
 
-// タップによる初期ロックオン
+// タップによる初期ロックオン（外カメラ用に反転処理を排除）
 canvasElement.addEventListener('click', (e) => {
     if (!lockonModeCheck.checked) return;
     
     const rect = canvasElement.getBoundingClientRect();
-    // カメラの反転（scaleX(-1)）を考慮したX座標の計算
     const clickX = (e.clientX - rect.left) / rect.width;
     const clickY = (e.clientY - rect.top) / rect.height;
 
-    // 現在検知されている骨格から、タップ位置に最も近いものを探す（簡易判定）
     if (latestPoseLandmarks) {
         const hip = latestPoseLandmarks[11]; // 左腰を基準点とする例
         const dist = Math.hypot(hip.x - clickX, hip.y - clickY);
         
-        if (dist < 0.2) { // 一定距離以内ならロックオン
+        if (dist < 0.2) { 
             trackingState.isTracking = true;
             trackingState.lostEdge = null;
             trackingState.lastPosition = { x: hip.x, y: hip.y };
@@ -103,20 +100,17 @@ canvasElement.addEventListener('click', (e) => {
 let latestPoseLandmarks = null;
 
 function onResults(results) {
-    // キャンバスのサイズ調整
     canvasElement.width = videoElement.videoWidth;
     canvasElement.height = videoElement.videoHeight;
-    
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
     
     if (!results.poseLandmarks) {
-        // 誰一人映っていない（ロスト処理へ）
         handleTrackingLost();
         return;
     }
 
     latestPoseLandmarks = results.poseLandmarks;
-    const currentHip = latestPoseLandmarks[11]; // ターゲット判定用の代表点（腰）
+    const currentHip = latestPoseLandmarks[11]; 
     const currentPosition = { x: currentHip.x, y: currentHip.y };
 
     if (trackingState.isTracking) {
@@ -127,19 +121,17 @@ function onResults(results) {
     } else {
         // 【ロスト状態】かつ【過去に一度ロックオンしていた】場合のみ、再入場チェックを行う
         if (trackingState.lostEdge) {
-            // 新しく映った人の初期位置の「端」を判定
             const detectedEdge = getEdgeLocation(currentPosition.x, currentPosition.y);
             
-            // 重要：ロストした端と、新しく現れた端が「完全に一致」した場合のみロックオンを復活させる
+            // ロストした端と、新しく現れた端が「完全に一致」した場合のみロックオンを復活させる
             if (detectedEdge === trackingState.lostEdge) {
                 trackingState.isTracking = true;
                 trackingState.lostEdge = null;
                 trackingState.lastPosition = currentPosition;
                 showToast("ターゲットが戻りました！自動追従を再開します。");
-                
                 drawSkeleton(results.poseLandmarks);
             } else {
-                // 条件（同じ端からではない）を満たさないため、骨格は検知してもロックオンせず無視する
+                // 条件（同じ端からではない）を満たさないため、骨格は検知してもロックオンせずスルー
                 console.log(`検知を無視: ロストした端=${trackingState.lostEdge}, 出現した端=${detectedEdge}`);
             }
         }
@@ -149,13 +141,9 @@ function onResults(results) {
 // ロスト時の判定と処理
 function handleTrackingLost() {
     if (trackingState.isTracking && trackingState.lastPosition) {
-        // 見失った瞬間の最後の座標から、どの端から消えたかを決定
         const exitEdge = getEdgeLocation(trackingState.lastPosition.x, trackingState.lastPosition.y);
-        
-        // 画面中央で消えた（隠れただけ）の場合は、最後に近づいていた端を推測、またはCENTERとする
         trackingState.lostEdge = exitEdge;
         trackingState.isTracking = false;
-        
         showToast(`ターゲットを見失いました。(${exitEdge}端エリアでロスト)`);
     }
 }
@@ -166,8 +154,7 @@ function drawSkeleton(landmarks) {
     canvasCtx.strokeStyle = '#00FF00';
     canvasCtx.lineWidth = 4;
 
-    // 簡易的に肩から腰へのラインを描画（動画内の緑色のフレーム枠に相当）
-    const points = [11, 12, 24, 23]; // 両肩・両腰
+    const points = [11, 12, 24, 23]; 
     canvasCtx.beginPath();
     canvasCtx.moveTo(landmarks[points[0]].x * canvasElement.width, landmarks[points[0]].y * canvasElement.height);
     for(let i=1; i<points.length; i++) {
@@ -177,7 +164,6 @@ function drawSkeleton(landmarks) {
     canvasCtx.stroke();
 }
 
-// アクション（手を挙げる・しゃがむ）の検知ロジック
 let wasHandUp = false;
 let wasSquat = false;
 
@@ -186,7 +172,6 @@ function checkActions(landmarks) {
     const leftShoulder = landmarks[11];
     const leftHip = landmarks[23];
 
-    // 手を挙げる判定（手首が肩より上にあるか）
     const isHandUp = leftWrist.y < leftShoulder.y - 0.1;
     if (isHandUp && !wasHandUp) {
         countA++;
@@ -194,7 +179,6 @@ function checkActions(landmarks) {
     }
     wasHandUp = isHandUp;
 
-    // しゃがむ判定（腰の位置が一定より下がるか、など簡易的な閾値設定）
     const isSquat = leftHip.y > 0.7; 
     if (isSquat && !wasSquat) {
         countB++;
@@ -217,12 +201,13 @@ pose.setOptions({
 });
 pose.onResults(onResults);
 
+// 外カメラ(facingMode: 'environment')を指定してカメラ起動
 const camera = new Camera(videoElement, {
     onFrame: async () => {
         await pose.send({image: videoElement});
     },
     width: 640,
-    height: 480
+    height: 480,
     facingMode: 'environment'
 });
 camera.start();
