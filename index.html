@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>特定人物追従カウンター（ピンポイント照合版）</title>
+    <title>特定人物追従カウンター（データ可視化版）</title>
     <style>
         html, body {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -37,6 +37,18 @@
         #count_numA { color: #00FF66; }
         #count_numB { color: #FFCC00; }
 
+        /* 🎨 可視化データ用スタイル */
+        .debug-panel {
+            display: flex; justify-content: center; align-items: center; gap: 10px;
+            margin-top: 10px; background: rgba(0, 0, 0, 0.7); padding: 8px 15px;
+            border-radius: 10px; color: #fff; font-size: 0.85rem;
+            width: fit-content; margin-left: auto; margin-right: auto;
+        }
+        .color-preview {
+            width: 40px; height: 20px; border-radius: 4px; border: 2px solid #fff;
+            background-color: transparent; display: inline-block; vertical-align: middle;
+        }
+
         #status { font-weight: bold; color: #ddd; margin: 12px 0 0 0; font-size: 0.9rem; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
@@ -50,11 +62,20 @@
 
     <div class="ui-layer">
         <h1>特定人物追従カウンター</h1>
-        <div class="sub-title">入場時ピンポイント色照合 ＆ 4方向完全防衛</div>
+        <div class="sub-title">内部データ可視化 ＆ 4方向完全防衛</div>
+        
         <div class="counters-wrapper">
             <div class="counter-box">手を挙げる(A): <span id="count_numA" class="count-num">0</span></div>
             <div class="counter-box">しゃがむ(b): <span id="count_numB" class="count-num">0</span></div>
         </div>
+
+        <!-- 👁️ 記憶データの可視化インジケーター -->
+        <div class="debug-panel">
+            <span>💾 記憶した服の色:</span>
+            <div id="color_indicator" class="color-preview"></div>
+            <span id="color_text">未登録</span>
+        </div>
+
         <p id="status">ｼｽﾃﾑ起動中...</p>
     </div>
 
@@ -69,6 +90,10 @@
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
 
+        // 可視化UI要素
+        const colorIndicator = document.getElementById('color_indicator');
+        const colorText = document.getElementById('color_text');
+
         let countA = 0;
         let countB = 0;
 
@@ -80,7 +105,7 @@
         let isLocked = false;               
         let isTargetVisible = false;        
         
-        let savedColor = null; // 最初にタップした時の「一生モノの色の記憶」            
+        let savedColor = null;              
         let exitDirection = "";             
 
         function startCamera() {
@@ -128,15 +153,21 @@
             }
         }
 
-        // 👆 タップで最初の1回だけ色を記憶
+        // 👆 タップで最初の1回だけ色を記憶し、UIに即座に反映
         canvasElement.addEventListener('click', () => {
             if (latestLandmarks) {
                 isLocked = true;
                 isTargetVisible = true;
                 exitDirection = "";
                 
-                // 【ここで1度だけ記憶】
                 savedColor = getBodyColor(latestLandmarks);
+                
+                // 👁️ UI可視化処理
+                if (savedColor) {
+                    const hslCss = `hsl(${Math.round(savedColor.h)}, ${Math.round(savedColor.s)}%, ${Math.round(savedColor.l)}%)`;
+                    colorIndicator.style.backgroundColor = hslCss;
+                    colorText.innerText = `H:${Math.round(savedColor.h)} S:${Math.round(savedColor.s)}% L:${Math.round(savedColor.l)}%`;
+                }
                 
                 statusText.innerText = "🎯 ターゲットを確定し、ロックオンしました！";
                 
@@ -148,6 +179,11 @@
                 isTargetVisible = false;
                 savedColor = null;
                 exitDirection = "";
+                
+                // 👁️ UIリセット
+                colorIndicator.style.backgroundColor = 'transparent';
+                colorText.innerText = "未登録";
+                
                 statusText.innerText = "🔓 ロック解除しました。";
             }
         });
@@ -175,7 +211,7 @@
                     const nose = latestLandmarks[0];
 
                     if (isLocked) {
-                        // 🚨 離脱判定（端18%を突破したら離脱方向を確定して見失い状態へ）
+                        // 🚨 離脱判定（端18%）
                         if (isTargetVisible) {
                             if (nose.x <= 0.18) { exitDirection = "左端"; isTargetVisible = false; } 
                             else if (nose.x >= 0.82) { exitDirection = "右端"; isTargetVisible = false; } 
@@ -183,10 +219,8 @@
                             else if (nose.y >= 0.82) { exitDirection = "下端"; isTargetVisible = false; }
                         }
 
-                        // 🔍 【復帰判定：入場時にピンポイント照合】
+                        // 🔍 復帰判定
                         if (!isTargetVisible && exitDirection !== "") {
-                            
-                            // 条件1: 消えたのと同じ端（20%以内）に誰かが現れたか
                             let isCorrectEntrance = false;
                             if (exitDirection === "左端" && nose.x < 0.20) isCorrectEntrance = true;
                             if (exitDirection === "右端" && nose.x > 0.80) isCorrectEntrance = true;
@@ -194,14 +228,12 @@
                             if (exitDirection === "下端" && nose.y > 0.80) isCorrectEntrance = true;
 
                             if (isCorrectEntrance) {
-                                // 条件2: 現れた人の色を「今この瞬間だけ1回」取得して、最初の記憶と照合
                                 const incomingColor = getBodyColor(latestLandmarks);
                                 
                                 if (incomingColor && savedColor) {
                                     let hDiff = Math.abs(savedColor.h - incomingColor.h);
                                     if (hDiff > 180) hDiff = 360 - hDiff;
 
-                                    // 最初の色と合致したらロックオン復帰
                                     if (hDiff < 30) {
                                         isTargetVisible = true;
                                         exitDirection = "";
@@ -212,12 +244,10 @@
                         }
                     }
 
-                    // 🎨 本人のみ描画
                     if (!isLocked || isTargetVisible) {
                         const lineColor = isLocked ? '#00FF66' : '#FFFFFF';
                         window.drawConnectors(canvasCtx, latestLandmarks, window.POSE_CONNECTIONS, {color: lineColor, lineWidth: 3});
 
-                        // カウント判定
                         const noseY = latestLandmarks[0].y;
                         const leftWristY = latestLandmarks[15].y;
                         const rightWristY = latestLandmarks[16].y;
@@ -246,7 +276,6 @@
                 }
             });
 
-            // 追従中も無駄なタイマー処理を挟まないため、最速でループを回します
             const frameLoop = async () => {
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
                     await pose.send({ image: video });
