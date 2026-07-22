@@ -54,11 +54,12 @@ let countB = 0;
 let trackingState = {
     isTracking: false,
     lostEdge: null,       
-    lastPosition: null    
+    lastPosition: null,
+    targetColor: null // 記憶した服の平均色 {r, g, b}
 };
 
-// ★判定エリアを15%から30%に拡大。これで端の検知を取りこぼしにくくします
 const EDGE_THRESHOLD = 0.30; 
+const COLOR_TOLERANCE = 80; // 色の許容判定距離
 
 function showToast(message) {
     toast.textContent = message;
@@ -74,6 +75,50 @@ function getEdgeLocation(x, y) {
     return 'CENTER'; 
 }
 
+// 指定したエリア（10x10ピクセル）の「平均色」を計算する関数
+function getAverageColor(centerX, centerY) {
+    const boxSize = 10;
+    const startX = Math.max(0, Math.floor(centerX * canvasElement.width - boxSize / 2));
+    const startY = Math.max(0, Math.floor(centerY * canvasElement.height - boxSize / 2));
+    
+    try {
+        const imgData = canvasCtx.getImageData(startX, startY, boxSize, boxSize).data;
+        let r = 0, g = 0, b = 0;
+        const count = imgData.length / 4;
+
+        for (let i = 0; i < imgData.length; i += 4) {
+            r += imgData[i];
+            g += imgData[i + 1];
+            b += imgData[i + 2];
+        }
+
+        return {
+            r: Math.round(r / count),
+            g: Math.round(g / count),
+            b: Math.round(b / count)
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+// 記憶した色と現在の色の「差分距離」を比較する関数
+function isSameColor(currentX, currentY) {
+    if (!trackingState.targetColor) return true; // 色記憶がなければパス
+    
+    const currentColor = getAverageColor(currentX, currentY);
+    if (!currentColor) return false;
+
+    const colorDiff = Math.sqrt(
+        Math.pow(currentColor.r - trackingState.targetColor.r, 2) +
+        Math.pow(currentColor.g - trackingState.targetColor.g, 2) +
+        Math.pow(currentColor.b - trackingState.targetColor.b, 2)
+    );
+
+    return colorDiff < COLOR_TOLERANCE;
+}
+
+// タップ時の処理
 canvasElement.addEventListener('click', (e) => {
     if (!lockonModeCheck.checked) return;
     
@@ -82,13 +127,22 @@ canvasElement.addEventListener('click', (e) => {
     const clickY = (e.clientY - rect.top) / rect.height;
 
     if (latestPoseLandmarks) {
-        const hip = latestPoseLandmarks[11]; 
-        const dist = Math.hypot(hip.x - clickX, hip.y - clickY);
+        const leftShoulder = latestPoseLandmarks[11];
+        const rightShoulder = latestPoseLandmarks[12];
+        const leftHip = latestPoseLandmarks[23];
+        
+        // 胴体の中央付近（胸元〜お腹）の座標を計算
+        const chestX = (leftShoulder.x + rightShoulder.x) / 2;
+        const chestY = (leftShoulder.y + leftHip.y) / 2;
+        
+        const dist = Math.hypot(chestX - clickX, chestY - clickY);
         
         if (dist < 0.2) { 
             trackingState.isTracking = true;
             trackingState.lostEdge = null;
-            trackingState.lastPosition = { x: hip.x, y: hip.y };
+            trackingState.lastPosition = { x: chestX, y: chestY };
+            // ★胸元エリアの平均色を取得して記憶
+            trackingState.targetColor = getAverageColor(chestX, chestY);
             showToast("ターゲットを確定し、ロックオンしました！");
         }
     }
@@ -107,8 +161,14 @@ function onResults(results) {
     }
 
     latestPoseLandmarks = results.poseLandmarks;
-    const currentHip = latestPoseLandmarks[11]; 
-    const currentPosition = { x: currentHip.x, y: currentHip.y };
+    
+    // 胴体の中心座標をターゲットの判定位置とする
+    const leftShoulder = latestPoseLandmarks[11];
+    const rightShoulder = latestPoseLandmarks[12];
+    const leftHip = latestPoseLandmarks[23];
+    const chestX = (leftShoulder.x + rightShoulder.x) / 2;
+    const chestY = (leftShoulder.y + leftHip.y) / 2;
+    const currentPosition = { x: chestX, y: chestY };
 
     if (trackingState.isTracking) {
         trackingState.lastPosition = currentPosition;
@@ -116,26 +176,22 @@ function onResults(results) {
         checkActions(results.poseLandmarks);
     } else {
         if (trackingState.lostEdge) {
-            // ★中央(CENTER)でロストしていた場合は、どこから現れても無条件で再追従させる（判定の緩和）
-            if (trackingState.lostEdge === 'CENTER') {
-                trackingState.isTracking = true;
-                trackingState.lostEdge = null;
-                trackingState.lastPosition = currentPosition;
-                showToast("ターゲットが戻りました！自動追従を再開します。");
-                drawSkeleton(results.poseLandmarks);
-                return;
-            }
-
-            // 端でロストしていた場合は、同じ端から現れたかチェック
             const detectedEdge = getEdgeLocation(currentPosition.x, currentPosition.y);
-            if (detectedEdge === trackingState.lostEdge) {
+            
+            // 条件1: ロストした端と同じ端から出ているか（または中央ロストか）
+            const isCorrectEdge = (trackingState.lostEdge === 'CENTER') || (detectedEdge === trackingState.lostEdge);
+            // 条件2: 服の平均色が一致しているか
+            const isMatchingColor = isSameColor(currentPosition.x, currentPosition.y);
+
+            // ★「端」と「服の色」の両方が合致した場合のみロックオン復帰
+            if (isCorrectEdge && isMatchingColor) {
                 trackingState.isTracking = true;
                 trackingState.lostEdge = null;
                 trackingState.lastPosition = currentPosition;
                 showToast("ターゲットが戻りました！自動追従を再開します。");
                 drawSkeleton(results.poseLandmarks);
             } else {
-                console.log(`検知を無視: ロストした端=${trackingState.lostEdge}, 出現した端=${detectedEdge}`);
+                console.log(`無視: 端一致=${isCorrectEdge}, 色一致=${isMatchingColor}`);
             }
         }
     }
